@@ -1,0 +1,718 @@
+openapi: 3.0.3
+info:
+  title: Prozorro CDB Public API (read-only subset)
+  version: "2.5"
+  description: |
+    Описані вручну ендпоінти **публічного** API ЦБД Prozorro, потрібні нашому MCP-серверу:
+    фіди та отримання тендерів, контрактів і планів, а також документів до них.
+
+    Офіційного OpenAPI для цієї частини ЦБД немає (вона написана на Pyramid). Специфікацію складено
+    за кодом `ProzorroUKR/openprocurement.api@137ffcd` (`src/openprocurement/**/procedure/models`,
+    `docs/source/basic-actions/feed.rst`, `opt_fields.rst`) та документацією
+    https://prozorro-api-docs.readthedocs.io/uk/master/.
+
+    Особливості:
+    * Читання не потребує авторизації. Під час перевищення ліміту запитів повертається `429`; потрібно повторювати з наростаючою паузою.
+    * Схеми описують лише поля, які ми використовуємо. Реальні об'єкти містять більше полів (`additionalProperties: true`).
+    * Склад полів тендера залежить від `procurementMethodType` та стадії процедури.
+      Пропозиції (`bids`) приховані, поки триває `active.tendering`, і стають публічними після розкриття.
+    * Багатомовні поля мають варіанти `*_en` / `*_ru` (наприклад, `title_en`); у схемах вони не перелічені.
+  contact:
+    name: Prozorro API docs
+    url: https://prozorro-api-docs.readthedocs.io/uk/master/
+servers:
+  - url: https://public-api.prozorro.gov.ua/api/2.5
+    description: Production (public read-only)
+  - url: https://public-api-sandbox.prozorro.gov.ua/api/2.5
+    description: Sandbox
+tags:
+  - name: Feed
+    description: Курсорні списки змін (синхронізація)
+  - name: Tenders
+  - name: Contracts
+  - name: Plans
+  - name: Documents
+paths:
+  /tenders:
+    get:
+      tags: [Feed, Tenders]
+      operationId: tendersFeed
+      summary: Фід тендерів
+      description: |
+        Список тендерів, відсортований за часом публічної модифікації (`public_modified`).
+        Елемент фіду за замовчуванням містить лише `id` і `dateModified`; решту полів можна додати через `opt_fields`.
+        Для повного тендера використовуйте `GET /tenders/{tender_id}`.
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Descending"
+        - $ref: "#/components/parameters/Mode"
+        - name: opt_fields
+          in: query
+          description: |
+            Додаткові поля через кому. Дозволені: `dateCreated`, `dateModified`, `tenderPeriod`, `qualificationPeriod`,
+            `auctionPeriod`, `awardPeriod`, `status`, `tenderID`, `lots`, `contracts`, `agreements`, `procuringEntity`,
+            `procurementMethodType`, `procurementMethod`, `next_check`, `mode`, `stage2TenderID`, `public_modified`.
+          schema: { type: string, example: "status,tenderID,procurementMethodType,procuringEntity" }
+      responses:
+        "200":
+          description: Сторінка фіду
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenderFeedPage" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /tenders/{tender_id}:
+    get:
+      tags: [Tenders]
+      operationId: getTender
+      summary: Повний тендер
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+        - name: opt_fields
+          in: query
+          description: Для детального ендпоінта дозволено лише `public_modified`.
+          schema: { type: string, enum: [public_modified] }
+      responses:
+        "200":
+          description: Тендер
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Tender" }
+                  config: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /tenders/{tender_id}/awards:
+    get:
+      tags: [Tenders]
+      operationId: listTenderAwards
+      summary: Рішення про визначення переможців (awards)
+      parameters: [{ $ref: "#/components/parameters/TenderId" }]
+      responses:
+        "200":
+          description: Список awards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Award" } }
+        "404": { $ref: "#/components/responses/Error" }
+  /tenders/{tender_id}/bids:
+    get:
+      tags: [Tenders]
+      operationId: listTenderBids
+      summary: Пропозиції учасників
+      description: Під час `active.tendering` повертає помилку або порожні дані; пропозиції публічні після розкриття.
+      parameters: [{ $ref: "#/components/parameters/TenderId" }]
+      responses:
+        "200":
+          description: Список пропозицій
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Bid" } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /tenders/{tender_id}/contracts:
+    get:
+      tags: [Tenders]
+      operationId: listTenderContracts
+      summary: Короткі дані контрактів у тендері
+      description: Повний договір доступний через `GET /contracts/{contract_id}` (той самий `id`).
+      parameters: [{ $ref: "#/components/parameters/TenderId" }]
+      responses:
+        "200":
+          description: Список контрактів
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/TenderContract" } }
+        "404": { $ref: "#/components/responses/Error" }
+  /tenders/{tender_id}/documents:
+    get:
+      tags: [Tenders, Documents]
+      operationId: listTenderDocuments
+      summary: Документи тендера (ТЗ, тендерна документація, повідомлення)
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+      responses:
+        "200":
+          description: Список документів
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        "404": { $ref: "#/components/responses/Error" }
+  /tenders/{tender_id}/documents/{document_id}:
+    get:
+      tags: [Tenders, Documents]
+      operationId: getTenderDocument
+      summary: Метадані документа або завантаження файлу
+      description: |
+        Без `download` повертає метадані документа. З `download=<key>` (ключ береться з `document.url`)
+        відповідає `302`, і перехід за `Location` завантажує файл зі сховища документів.
+        На практиці простіше одразу завантажити `document.url`.
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/Download"
+      responses:
+        "200":
+          description: Метадані документа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Document" }
+        "302": { $ref: "#/components/responses/FileRedirect" }
+        "404": { $ref: "#/components/responses/Error" }
+  /contracts:
+    get:
+      tags: [Feed, Contracts]
+      operationId: contractsFeed
+      summary: Фід договорів
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Descending"
+        - $ref: "#/components/parameters/Mode"
+        - name: opt_fields
+          in: query
+          description: "Дозволені: `dateCreated`, `contractID`, `dateModified`, `status`, `public_modified`."
+          schema: { type: string, example: "status,contractID" }
+      responses:
+        "200":
+          description: Сторінка фіду
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPage" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /contracts/{contract_id}:
+    get:
+      tags: [Contracts]
+      operationId: getContract
+      summary: Повний договір
+      description: Містить фінальні ціни за одиницю (`items[].unit.value`) та зміни до договору (`changes`).
+      parameters: [{ $ref: "#/components/parameters/ContractId" }]
+      responses:
+        "200":
+          description: Договір
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Contract" }
+        "404": { $ref: "#/components/responses/Error" }
+  /contracts/{contract_id}/documents:
+    get:
+      tags: [Contracts, Documents]
+      operationId: listContractDocuments
+      summary: Документи договору
+      parameters: [{ $ref: "#/components/parameters/ContractId" }]
+      responses:
+        "200":
+          description: Список документів
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        "404": { $ref: "#/components/responses/Error" }
+  /contracts/{contract_id}/documents/{document_id}:
+    get:
+      tags: [Contracts, Documents]
+      operationId: getContractDocument
+      summary: Метадані документа договору або завантаження файлу
+      parameters:
+        - $ref: "#/components/parameters/ContractId"
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/Download"
+      responses:
+        "200":
+          description: Метадані документа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Document" }
+        "302": { $ref: "#/components/responses/FileRedirect" }
+        "404": { $ref: "#/components/responses/Error" }
+  /plans:
+    get:
+      tags: [Feed, Plans]
+      operationId: plansFeed
+      summary: Фід планів закупівель
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Descending"
+        - $ref: "#/components/parameters/Mode"
+        - name: opt_fields
+          in: query
+          description: "Дозволені: `dateCreated`, `dateModified`, `status`, `planID`, `procuringEntity`, `procurementMethodType`, `mode`, `public_modified`."
+          schema: { type: string, example: "status,planID,procuringEntity" }
+      responses:
+        "200":
+          description: Сторінка фіду
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPage" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /plans/{plan_id}:
+    get:
+      tags: [Plans]
+      operationId: getPlan
+      summary: Повний план закупівлі
+      parameters:
+        - name: plan_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+      responses:
+        "200":
+          description: План
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Plan" }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  parameters:
+    TenderId:
+      name: tender_id
+      in: path
+      required: true
+      description: Внутрішній ідентифікатор (32 hex). Це не `tenderID` вигляду `UA-2026-01-01-000001-a`.
+      schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+    ContractId:
+      name: contract_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+    Download:
+      name: download
+      in: query
+      required: false
+      description: Ключ файлу з `document.url`. Якщо задано, відповідь буде `302` на файл.
+      schema: { type: string }
+    Offset:
+      name: offset
+      in: query
+      description: |
+        Курсор `{timestamp}.{skip_len}.{skip_hash}` з `next_page.offset` попередньої відповіді.
+        Зручніше переходити за `next_page.uri`.
+      schema: { type: string, example: "1696888800.0.2.c9e589b703dacf9b5ed4833357465084" }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    Descending:
+      name: descending
+      in: query
+      description: Будь-яке значення вмикає сортування від нових до старих.
+      schema: { type: string, example: "1" }
+    Mode:
+      name: mode
+      in: query
+      description: "Без параметра повертаються лише реальні об'єкти; `test`: лише тестові; `_all_`: усі."
+      schema: { type: string, enum: [test, _all_] }
+
+  responses:
+    Error:
+      description: Помилка
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyRequests:
+      description: Перевищено ліміт запитів. Повторіть пізніше з наростаючою паузою.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    FileRedirect:
+      description: Перенаправлення на файл у сховищі документів
+      headers:
+        Location:
+          schema: { type: string, format: uri }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        status: { type: string, example: error }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              location: { type: string, example: url }
+              name: { type: string, example: tender_id }
+              description: { type: string, example: Not Found }
+
+    PageLink:
+      type: object
+      properties:
+        offset: { type: string }
+        path: { type: string }
+        uri: { type: string, format: uri }
+    FeedItem:
+      type: object
+      additionalProperties: true
+      required: [id, dateModified]
+      properties:
+        id: { type: string }
+        dateModified: { type: string, format: date-time }
+        public_modified: { type: number, description: Unix timestamp (сек) }
+    FeedPage:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/FeedItem" } }
+        next_page: { $ref: "#/components/schemas/PageLink" }
+        prev_page: { $ref: "#/components/schemas/PageLink" }
+    TenderFeedItem:
+      allOf:
+        - $ref: "#/components/schemas/FeedItem"
+        - type: object
+          properties:
+            status: { $ref: "#/components/schemas/TenderStatus" }
+            tenderID: { type: string }
+            procurementMethodType: { $ref: "#/components/schemas/ProcurementMethodType" }
+            procurementMethod: { type: string }
+            procuringEntity: { $ref: "#/components/schemas/Organization" }
+            dateCreated: { type: string, format: date-time }
+            tenderPeriod: { $ref: "#/components/schemas/Period" }
+            awardPeriod: { $ref: "#/components/schemas/Period" }
+            mode: { type: string }
+    TenderFeedPage:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/TenderFeedItem" } }
+        next_page: { $ref: "#/components/schemas/PageLink" }
+        prev_page: { $ref: "#/components/schemas/PageLink" }
+
+    TenderStatus:
+      type: string
+      enum:
+        - draft
+        - draft.pending
+        - draft.unsuccessful
+        - draft.stage2
+        - active
+        - active.enquiries
+        - active.tendering
+        - active.pre-qualification
+        - active.pre-qualification.stand-still
+        - active.auction
+        - active.qualification
+        - active.qualification.stand-still
+        - active.awarded
+        - active.stage2.pending
+        - active.stage2.waiting
+        - complete
+        - cancelled
+        - unsuccessful
+    ProcurementMethodType:
+      type: string
+      description: Тип процедури (кодлист `standards/codelists/tender/tender_procurement_method_type.json`)
+      example: aboveThreshold
+      x-known-values:
+        - belowThreshold
+        - requestForProposal
+        - aboveThreshold
+        - competitiveOrdering
+        - aboveThresholdUA
+        - aboveThresholdEU
+        - negotiation
+        - negotiation.quick
+        - aboveThresholdUA.defense
+        - competitiveDialogueUA
+        - competitiveDialogueEU
+        - competitiveDialogueUA.stage2
+        - competitiveDialogueEU.stage2
+        - reporting
+        - esco
+        - closeFrameworkAgreementUA
+        - closeFrameworkAgreementSelectionUA
+        - centralizedProcurement
+        - priceQuotation
+        - simple.defense
+        - complexAsset.arma
+
+    Value:
+      type: object
+      properties:
+        amount: { type: number, minimum: 0 }
+        currency: { type: string, example: UAH, minLength: 3, maxLength: 3 }
+        valueAddedTaxIncluded: { type: boolean }
+    ContractValue:
+      allOf:
+        - $ref: "#/components/schemas/Value"
+        - type: object
+          properties:
+            amountNet: { type: number, description: Сума без ПДВ }
+    Period:
+      type: object
+      properties:
+        startDate: { type: string, format: date-time }
+        endDate: { type: string, format: date-time }
+    Unit:
+      type: object
+      properties:
+        code: { type: string, description: Код одиниці виміру (Recommendation 20), example: H87 }
+        name: { type: string, example: штука }
+        value: { $ref: "#/components/schemas/Value" }
+    Classification:
+      type: object
+      properties:
+        scheme: { type: string, example: ДК021 }
+        id: { type: string, example: 33140000-3 }
+        description: { type: string, example: Медичні матеріали }
+    Identifier:
+      type: object
+      properties:
+        scheme: { type: string, example: UA-EDR }
+        id: { type: string, description: ЄДРПОУ / РНОКПП, example: "12345678" }
+        legalName: { type: string }
+    Address:
+      type: object
+      additionalProperties: true
+      properties:
+        streetAddress: { type: string }
+        locality: { type: string }
+        region: { type: string }
+        postalCode: { type: string }
+        countryName: { type: string }
+    Organization:
+      type: object
+      additionalProperties: true
+      properties:
+        name: { type: string }
+        identifier: { $ref: "#/components/schemas/Identifier" }
+        address: { $ref: "#/components/schemas/Address" }
+        kind: { type: string, description: Тип замовника (для procuringEntity) }
+        scale: { type: string, description: Розмір підприємства (для постачальників), example: micro }
+        contactPoint: { type: object, additionalProperties: true }
+
+    Item:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        description: { type: string }
+        classification: { $ref: "#/components/schemas/Classification" }
+        additionalClassifications:
+          type: array
+          description: Додаткові класифікатори (INN/МНН, GMDN, ДК003 тощо)
+          items: { $ref: "#/components/schemas/Classification" }
+        quantity: { type: number }
+        unit: { $ref: "#/components/schemas/Unit" }
+        deliveryDate: { $ref: "#/components/schemas/Period" }
+        deliveryAddress: { $ref: "#/components/schemas/Address" }
+        relatedLot: { type: string }
+        relatedBuyer: { type: string }
+        category: { type: string, description: ID категорії Prozorro Market }
+        profile: { type: string, description: ID профілю Prozorro Market }
+        product: { type: string, description: ID товару Prozorro Market }
+    Lot:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, cancelled, unsuccessful, complete] }
+        value: { $ref: "#/components/schemas/Value" }
+        minimalStep: { $ref: "#/components/schemas/Value" }
+        auctionPeriod: { $ref: "#/components/schemas/Period" }
+    Document:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        documentType:
+          type: string
+          description: Тип документа. Для ТЗ це `technicalSpecifications` або `biddingDocuments`, але часто тип не вказано.
+          example: technicalSpecifications
+        title: { type: string, example: Технічне завдання.pdf }
+        format: { type: string, example: application/pdf }
+        url: { type: string, format: uri, description: "Посилання на файл. Для конфіденційних документів (buyerOnly) публічно недоступне" }
+        hash: { type: string, example: "md5:..." }
+        documentOf: { type: string, enum: [tender, item, lot, post] }
+        relatedItem: { type: string }
+        language: { type: string, enum: [uk, en, ru] }
+        confidentiality: { type: string, enum: [public, buyerOnly] }
+        datePublished: { type: string, format: date-time }
+        dateModified: { type: string, format: date-time }
+        author: { type: string }
+    Award:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, unsuccessful, active, cancelled], description: "`active` означає переможця" }
+        date: { type: string, format: date-time }
+        value: { $ref: "#/components/schemas/Value" }
+        suppliers: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+        bid_id: { type: string }
+        lotID: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        qualified: { type: boolean }
+        eligible: { type: boolean }
+        documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+    LotValue:
+      type: object
+      additionalProperties: true
+      properties:
+        relatedLot: { type: string }
+        value: { $ref: "#/components/schemas/Value" }
+        initialValue: { $ref: "#/components/schemas/Value" }
+        status: { type: string }
+    Bid:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        status: { type: string, example: active }
+        date: { type: string, format: date-time }
+        tenderers: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+        value: { allOf: [{ $ref: "#/components/schemas/Value" }], description: Ціна після аукціону (для тендера без лотів) }
+        initialValue: { allOf: [{ $ref: "#/components/schemas/Value" }], description: Початкова ціна до аукціону }
+        lotValues: { type: array, items: { $ref: "#/components/schemas/LotValue" } }
+        items:
+          type: array
+          description: Позиції пропозиції з цінами за одиницю (`unit.value`)
+          items: { $ref: "#/components/schemas/Item" }
+        documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+    TenderContract:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        awardID: { type: string }
+        contractID: { type: string }
+        status: { type: string, enum: [pending, pending.winner-signing, terminated, active, cancelled] }
+        value: { $ref: "#/components/schemas/ContractValue" }
+        date: { type: string, format: date-time }
+        dateSigned: { type: string, format: date-time }
+    Tender:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        tenderID: { type: string, example: UA-2026-01-15-000123-a }
+        title: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/TenderStatus" }
+        procurementMethod: { type: string, example: open }
+        procurementMethodType: { $ref: "#/components/schemas/ProcurementMethodType" }
+        mainProcurementCategory: { type: string, enum: [goods, services, works] }
+        mode: { type: string, enum: [test] }
+        procuringEntity: { $ref: "#/components/schemas/Organization" }
+        buyers: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+        value: { $ref: "#/components/schemas/Value" }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        lots: { type: array, items: { $ref: "#/components/schemas/Lot" } }
+        tenderPeriod: { $ref: "#/components/schemas/Period" }
+        enquiryPeriod: { $ref: "#/components/schemas/Period" }
+        auctionPeriod: { $ref: "#/components/schemas/Period" }
+        awardPeriod: { $ref: "#/components/schemas/Period" }
+        documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        bids: { type: array, items: { $ref: "#/components/schemas/Bid" } }
+        awards: { type: array, items: { $ref: "#/components/schemas/Award" } }
+        contracts: { type: array, items: { $ref: "#/components/schemas/TenderContract" } }
+        plans:
+          type: array
+          items: { type: object, properties: { id: { type: string } } }
+        criteria: { type: array, items: { type: object, additionalProperties: true } }
+        date: { type: string, format: date-time }
+        dateCreated: { type: string, format: date-time }
+        dateModified: { type: string, format: date-time }
+    Change:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, active] }
+        rationale: { type: string }
+        rationaleTypes: { type: array, items: { type: string } }
+        date: { type: string, format: date-time }
+        dateSigned: { type: string, format: date-time }
+    Contract:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        contractID: { type: string, example: UA-2026-01-15-000123-a-a1 }
+        contractNumber: { type: string }
+        tender_id: { type: string }
+        awardID: { type: string }
+        status: { type: string, enum: [pending, pending.winner-signing, terminated, active, cancelled] }
+        title: { type: string }
+        description: { type: string }
+        buyer: { $ref: "#/components/schemas/Organization" }
+        suppliers: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+        value: { $ref: "#/components/schemas/ContractValue" }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        period: { $ref: "#/components/schemas/Period" }
+        dateSigned: { type: string, format: date-time }
+        changes: { type: array, items: { $ref: "#/components/schemas/Change" } }
+        amountPaid: { $ref: "#/components/schemas/Value" }
+        terminationDetails: { type: string }
+        documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        dateCreated: { type: string, format: date-time }
+        dateModified: { type: string, format: date-time }
+    Plan:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        planID: { type: string, example: UA-P-2026-01-15-000123-a }
+        status: { type: string, enum: [draft, scheduled, cancelled, complete] }
+        procuringEntity: { $ref: "#/components/schemas/Organization" }
+        buyers: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+        classification: { $ref: "#/components/schemas/Classification" }
+        additionalClassifications: { type: array, items: { $ref: "#/components/schemas/Classification" } }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        budget:
+          type: object
+          additionalProperties: true
+          properties:
+            id: { type: string }
+            description: { type: string }
+            amount: { type: number }
+            amountNet: { type: number }
+            currency: { type: string }
+            period: { $ref: "#/components/schemas/Period" }
+        tender:
+          type: object
+          description: Запланована процедура
+          properties:
+            procurementMethod: { type: string }
+            procurementMethodType: { type: string }
+            tenderPeriod: { $ref: "#/components/schemas/Period" }
+        tender_id: { type: string, description: "ID тендера, створеного за планом" }
+        documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        datePublished: { type: string, format: date-time }
+        dateCreated: { type: string, format: date-time }
+        dateModified: { type: string, format: date-time }
