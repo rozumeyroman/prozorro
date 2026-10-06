@@ -1,0 +1,4436 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "version": "ProzorroUKR/openprocurement.api@137ffcd",
+    "title": "Prozorro CDB API (async part, prefix /api/2.5)"
+  },
+  "paths": {
+    "/ping": {
+      "get": {}
+    },
+    "/contracts/{contract_id}/violation_reports": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contract_id",
+            "required": true,
+            "schema": {
+              "title": "contract_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "properties": {
+                      "details": {
+                        "$ref": "#/components/schemas/ReportDetails"
+                      },
+                      "_id": {
+                        "title": "Id",
+                        "type": "string"
+                      },
+                      "_rev": {
+                        "default": "",
+                        "title": "Rev",
+                        "type": "string"
+                      },
+                      "public_modified": {
+                        "default": 0,
+                        "title": "Public Modified",
+                        "type": "number"
+                      },
+                      "violationReportID": {
+                        "description": "Більш візуально прийнятний ідентифікатор",
+                        "title": "Violationreportid",
+                        "type": "string"
+                      },
+                      "status": {
+                        "$ref": "#/components/schemas/ViolationReportStatus",
+                        "default": "draft"
+                      },
+                      "mode": {
+                        "anyOf": [
+                          {
+                            "const": "test",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Тест мод (з тендера)",
+                        "title": "Mode"
+                      },
+                      "tender_id": {
+                        "title": "Tender Id",
+                        "type": "string"
+                      },
+                      "contract_id": {
+                        "title": "Contract Id",
+                        "type": "string"
+                      },
+                      "dateCreated": {
+                        "description": "Дата створення",
+                        "format": "date-time",
+                        "title": "Datecreated",
+                        "type": "string"
+                      },
+                      "dateModified": {
+                        "description": "Дата оновлення",
+                        "format": "date-time",
+                        "title": "Datemodified",
+                        "type": "string"
+                      },
+                      "datePublished": {
+                        "anyOf": [
+                          {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Дата публікації",
+                        "title": "Datepublished"
+                      },
+                      "author": {
+                        "$ref": "#/components/schemas/Buyer",
+                        "description": "Інформація про Замовника (скаржника)"
+                      },
+                      "defendants": {
+                        "description": "Інформація про Постачальника (відповідача)",
+                        "items": {
+                          "$ref": "#/components/schemas/Supplier"
+                        },
+                        "minItems": 1,
+                        "title": "Defendants",
+                        "type": "array"
+                      },
+                      "authority": {
+                        "$ref": "#/components/schemas/ProcuringEntity",
+                        "default": null,
+                        "description": "Інформація про ЦЗО (власник відбору)"
+                      },
+                      "defendantPeriod": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/components/schemas/Period"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Період коли відповідачу дозволено надавати пояснення"
+                      },
+                      "defendantStatements": {
+                        "description": "Контраргументи Постачальника",
+                        "items": {
+                          "$ref": "#/components/schemas/DefendantStatementDBModel"
+                        },
+                        "title": "Defendantstatements",
+                        "type": "array"
+                      },
+                      "decisions": {
+                        "description": "Рішення ЦЗО",
+                        "items": {
+                          "$ref": "#/components/schemas/DecisionDBModel"
+                        },
+                        "title": "Decisions",
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "details",
+                      "violationReportID",
+                      "tender_id",
+                      "contract_id",
+                      "dateCreated",
+                      "dateModified",
+                      "author",
+                      "defendants"
+                    ],
+                    "title": "ViolationReportDBModel",
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/ViolationReportPostRequestData"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[ViolationReportPostRequestData]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contract_id",
+            "required": true,
+            "schema": {
+              "title": "contract_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ViolationReportDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[ViolationReportDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tender/{tender_id}/violation_reports": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tender_id",
+            "required": true,
+            "schema": {
+              "title": "tender_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "properties": {
+                      "details": {
+                        "$ref": "#/components/schemas/ReportDetails"
+                      },
+                      "_id": {
+                        "title": "Id",
+                        "type": "string"
+                      },
+                      "_rev": {
+                        "default": "",
+                        "title": "Rev",
+                        "type": "string"
+                      },
+                      "public_modified": {
+                        "default": 0,
+                        "title": "Public Modified",
+                        "type": "number"
+                      },
+                      "violationReportID": {
+                        "description": "Більш візуально прийнятний ідентифікатор",
+                        "title": "Violationreportid",
+                        "type": "string"
+                      },
+                      "status": {
+                        "$ref": "#/components/schemas/ViolationReportStatus",
+                        "default": "draft"
+                      },
+                      "mode": {
+                        "anyOf": [
+                          {
+                            "const": "test",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Тест мод (з тендера)",
+                        "title": "Mode"
+                      },
+                      "tender_id": {
+                        "title": "Tender Id",
+                        "type": "string"
+                      },
+                      "contract_id": {
+                        "title": "Contract Id",
+                        "type": "string"
+                      },
+                      "dateCreated": {
+                        "description": "Дата створення",
+                        "format": "date-time",
+                        "title": "Datecreated",
+                        "type": "string"
+                      },
+                      "dateModified": {
+                        "description": "Дата оновлення",
+                        "format": "date-time",
+                        "title": "Datemodified",
+                        "type": "string"
+                      },
+                      "datePublished": {
+                        "anyOf": [
+                          {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Дата публікації",
+                        "title": "Datepublished"
+                      },
+                      "author": {
+                        "$ref": "#/components/schemas/Buyer",
+                        "description": "Інформація про Замовника (скаржника)"
+                      },
+                      "defendants": {
+                        "description": "Інформація про Постачальника (відповідача)",
+                        "items": {
+                          "$ref": "#/components/schemas/Supplier"
+                        },
+                        "minItems": 1,
+                        "title": "Defendants",
+                        "type": "array"
+                      },
+                      "authority": {
+                        "$ref": "#/components/schemas/ProcuringEntity",
+                        "default": null,
+                        "description": "Інформація про ЦЗО (власник відбору)"
+                      },
+                      "defendantPeriod": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/components/schemas/Period"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Період коли відповідачу дозволено надавати пояснення"
+                      },
+                      "defendantStatements": {
+                        "description": "Контраргументи Постачальника",
+                        "items": {
+                          "$ref": "#/components/schemas/DefendantStatementDBModel"
+                        },
+                        "title": "Defendantstatements",
+                        "type": "array"
+                      },
+                      "decisions": {
+                        "description": "Рішення ЦЗО",
+                        "items": {
+                          "$ref": "#/components/schemas/DecisionDBModel"
+                        },
+                        "title": "Decisions",
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "details",
+                      "violationReportID",
+                      "tender_id",
+                      "contract_id",
+                      "dateCreated",
+                      "dateModified",
+                      "author",
+                      "defendants"
+                    ],
+                    "title": "ViolationReportDBModel",
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/ListingResponseDataModel"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    },
+                    "next_page": {
+                      "$ref": "#/components/schemas/PageListingModel"
+                    },
+                    "prev_page": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/PageListingModel"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_page",
+                    "prev_page"
+                  ],
+                  "title": "ListingResponseModel",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "details": {
+                      "$ref": "#/components/schemas/ReportDetails"
+                    },
+                    "_id": {
+                      "title": "Id",
+                      "type": "string"
+                    },
+                    "_rev": {
+                      "default": "",
+                      "title": "Rev",
+                      "type": "string"
+                    },
+                    "public_modified": {
+                      "default": 0,
+                      "title": "Public Modified",
+                      "type": "number"
+                    },
+                    "violationReportID": {
+                      "description": "Більш візуально прийнятний ідентифікатор",
+                      "title": "Violationreportid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/ViolationReportStatus",
+                      "default": "draft"
+                    },
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "test",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Тест мод (з тендера)",
+                      "title": "Mode"
+                    },
+                    "tender_id": {
+                      "title": "Tender Id",
+                      "type": "string"
+                    },
+                    "contract_id": {
+                      "title": "Contract Id",
+                      "type": "string"
+                    },
+                    "dateCreated": {
+                      "description": "Дата створення",
+                      "format": "date-time",
+                      "title": "Datecreated",
+                      "type": "string"
+                    },
+                    "dateModified": {
+                      "description": "Дата оновлення",
+                      "format": "date-time",
+                      "title": "Datemodified",
+                      "type": "string"
+                    },
+                    "datePublished": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Дата публікації",
+                      "title": "Datepublished"
+                    },
+                    "author": {
+                      "$ref": "#/components/schemas/Buyer",
+                      "description": "Інформація про Замовника (скаржника)"
+                    },
+                    "defendants": {
+                      "description": "Інформація про Постачальника (відповідача)",
+                      "items": {
+                        "$ref": "#/components/schemas/Supplier"
+                      },
+                      "minItems": 1,
+                      "title": "Defendants",
+                      "type": "array"
+                    },
+                    "authority": {
+                      "$ref": "#/components/schemas/ProcuringEntity",
+                      "default": null,
+                      "description": "Інформація про ЦЗО (власник відбору)"
+                    },
+                    "defendantPeriod": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/Period"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Період коли відповідачу дозволено надавати пояснення"
+                    },
+                    "defendantStatements": {
+                      "description": "Контраргументи Постачальника",
+                      "items": {
+                        "$ref": "#/components/schemas/DefendantStatementDBModel"
+                      },
+                      "title": "Defendantstatements",
+                      "type": "array"
+                    },
+                    "decisions": {
+                      "description": "Рішення ЦЗО",
+                      "items": {
+                        "$ref": "#/components/schemas/DecisionDBModel"
+                      },
+                      "title": "Decisions",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "details",
+                    "violationReportID",
+                    "tender_id",
+                    "contract_id",
+                    "dateCreated",
+                    "dateModified",
+                    "author",
+                    "defendants"
+                  ],
+                  "title": "ViolationReportDBModel",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/ViolationReportPatchDetailsRequestData"
+                      },
+                      {
+                        "$ref": "#/components/schemas/ViolationReportPublishRequestData"
+                      }
+                    ],
+                    "title": "Data"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[Union[ViolationReportPatchDetailsRequestData, ViolationReportPublishRequestData]]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "details": {
+                      "$ref": "#/components/schemas/ReportDetails"
+                    },
+                    "_id": {
+                      "title": "Id",
+                      "type": "string"
+                    },
+                    "_rev": {
+                      "default": "",
+                      "title": "Rev",
+                      "type": "string"
+                    },
+                    "public_modified": {
+                      "default": 0,
+                      "title": "Public Modified",
+                      "type": "number"
+                    },
+                    "violationReportID": {
+                      "description": "Більш візуально прийнятний ідентифікатор",
+                      "title": "Violationreportid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/ViolationReportStatus",
+                      "default": "draft"
+                    },
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "test",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Тест мод (з тендера)",
+                      "title": "Mode"
+                    },
+                    "tender_id": {
+                      "title": "Tender Id",
+                      "type": "string"
+                    },
+                    "contract_id": {
+                      "title": "Contract Id",
+                      "type": "string"
+                    },
+                    "dateCreated": {
+                      "description": "Дата створення",
+                      "format": "date-time",
+                      "title": "Datecreated",
+                      "type": "string"
+                    },
+                    "dateModified": {
+                      "description": "Дата оновлення",
+                      "format": "date-time",
+                      "title": "Datemodified",
+                      "type": "string"
+                    },
+                    "datePublished": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Дата публікації",
+                      "title": "Datepublished"
+                    },
+                    "author": {
+                      "$ref": "#/components/schemas/Buyer",
+                      "description": "Інформація про Замовника (скаржника)"
+                    },
+                    "defendants": {
+                      "description": "Інформація про Постачальника (відповідача)",
+                      "items": {
+                        "$ref": "#/components/schemas/Supplier"
+                      },
+                      "minItems": 1,
+                      "title": "Defendants",
+                      "type": "array"
+                    },
+                    "authority": {
+                      "$ref": "#/components/schemas/ProcuringEntity",
+                      "default": null,
+                      "description": "Інформація про ЦЗО (власник відбору)"
+                    },
+                    "defendantPeriod": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/Period"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Період коли відповідачу дозволено надавати пояснення"
+                    },
+                    "defendantStatements": {
+                      "description": "Контраргументи Постачальника",
+                      "items": {
+                        "$ref": "#/components/schemas/DefendantStatementDBModel"
+                      },
+                      "title": "Defendantstatements",
+                      "type": "array"
+                    },
+                    "decisions": {
+                      "description": "Рішення ЦЗО",
+                      "items": {
+                        "$ref": "#/components/schemas/DecisionDBModel"
+                      },
+                      "title": "Decisions",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "details",
+                    "violationReportID",
+                    "tender_id",
+                    "contract_id",
+                    "dateCreated",
+                    "dateModified",
+                    "author",
+                    "defendants"
+                  ],
+                  "title": "ViolationReportDBModel",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/details": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "details": {
+                      "$ref": "#/components/schemas/ReportDetails"
+                    },
+                    "_id": {
+                      "title": "Id",
+                      "type": "string"
+                    },
+                    "_rev": {
+                      "default": "",
+                      "title": "Rev",
+                      "type": "string"
+                    },
+                    "public_modified": {
+                      "default": 0,
+                      "title": "Public Modified",
+                      "type": "number"
+                    },
+                    "violationReportID": {
+                      "description": "Більш візуально прийнятний ідентифікатор",
+                      "title": "Violationreportid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/ViolationReportStatus",
+                      "default": "draft"
+                    },
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "test",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Тест мод (з тендера)",
+                      "title": "Mode"
+                    },
+                    "tender_id": {
+                      "title": "Tender Id",
+                      "type": "string"
+                    },
+                    "contract_id": {
+                      "title": "Contract Id",
+                      "type": "string"
+                    },
+                    "dateCreated": {
+                      "description": "Дата створення",
+                      "format": "date-time",
+                      "title": "Datecreated",
+                      "type": "string"
+                    },
+                    "dateModified": {
+                      "description": "Дата оновлення",
+                      "format": "date-time",
+                      "title": "Datemodified",
+                      "type": "string"
+                    },
+                    "datePublished": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Дата публікації",
+                      "title": "Datepublished"
+                    },
+                    "author": {
+                      "$ref": "#/components/schemas/Buyer",
+                      "description": "Інформація про Замовника (скаржника)"
+                    },
+                    "defendants": {
+                      "description": "Інформація про Постачальника (відповідача)",
+                      "items": {
+                        "$ref": "#/components/schemas/Supplier"
+                      },
+                      "minItems": 1,
+                      "title": "Defendants",
+                      "type": "array"
+                    },
+                    "authority": {
+                      "$ref": "#/components/schemas/ProcuringEntity",
+                      "default": null,
+                      "description": "Інформація про ЦЗО (власник відбору)"
+                    },
+                    "defendantPeriod": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/Period"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Період коли відповідачу дозволено надавати пояснення"
+                    },
+                    "defendantStatements": {
+                      "description": "Контраргументи Постачальника",
+                      "items": {
+                        "$ref": "#/components/schemas/DefendantStatementDBModel"
+                      },
+                      "title": "Defendantstatements",
+                      "type": "array"
+                    },
+                    "decisions": {
+                      "description": "Рішення ЦЗО",
+                      "items": {
+                        "$ref": "#/components/schemas/DecisionDBModel"
+                      },
+                      "title": "Decisions",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "details",
+                    "violationReportID",
+                    "tender_id",
+                    "contract_id",
+                    "dateCreated",
+                    "dateModified",
+                    "author",
+                    "defendants"
+                  ],
+                  "title": "ViolationReportDBModel",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/details/documents": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/Document"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[List[Document]]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/details/documents/{document_id}": {
+      "put": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GetDocumentResponse"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[GetDocumentResponse]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports.details"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PatchDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PatchDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/defendantStatements": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/DefendantStatementDBModel"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[list[DefendantStatementDBModel]]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/DefendantStatementPostRequestData"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[DefendantStatementPostRequestData]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DefendantStatementDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DefendantStatementDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/defendantStatements/{defendant_statement_id}": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DefendantStatementDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DefendantStatementDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/DefendantStatementPatchRequestData"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DefendantStatementActivateRequestData"
+                      }
+                    ],
+                    "title": "Data"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[Union[DefendantStatementPatchRequestData, DefendantStatementActivateRequestData]]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DefendantStatementDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DefendantStatementDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/defendantStatements/{defendant_statement_id}/documents": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/Document"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[List[Document]]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/defendantStatements/{defendant_statement_id}/documents/{document_id}": {
+      "put": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GetDocumentResponse"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[GetDocumentResponse]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports.defendantStatements"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PatchDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PatchDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defendant_statement_id",
+            "required": true,
+            "schema": {
+              "title": "defendant_statement_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/decisions": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/DecisionDBModel"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[list[DecisionDBModel]]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/DecisionPostRequestData"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[DecisionPostRequestData]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DecisionDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DecisionDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/decisions/{decision_id}": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DecisionDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DecisionDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/DecisionPatchRequestData"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DecisionActivateRequestData"
+                      }
+                    ],
+                    "title": "Data"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[Union[DecisionPatchRequestData, DecisionActivateRequestData]]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DecisionDBModel"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[DecisionDBModel]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/decisions/{decision_id}/documents": {
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/Document"
+                      },
+                      "title": "Data",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[List[Document]]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violation_reports/{violation_report_id}/decisions/{decision_id}/documents/{document_id}": {
+      "put": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PostDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PostDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "description": "",
+        "tags": [
+          "ViolationReports.decisions"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/PatchDocument"
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "title": "DataModel[PatchDocument]",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "violation_report_id",
+            "required": true,
+            "schema": {
+              "title": "violation_report_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "decision_id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "document_id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "title": "DataModel[Document]",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "properties": {
+          "streetAddress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Streetaddress"
+          },
+          "locality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Locality"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Region"
+          },
+          "postalCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Postalcode"
+          },
+          "countryName": {
+            "title": "Countryname",
+            "type": "string"
+          },
+          "countryName_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Countryname En"
+          },
+          "countryName_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Countryname Ru"
+          },
+          "addressDetails": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AddressClassification"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Addressdetails"
+          }
+        },
+        "required": [
+          "countryName"
+        ],
+        "title": "Address",
+        "type": "object"
+      },
+      "AddressClassification": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "scheme": {
+            "title": "Scheme",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description En"
+          },
+          "description_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description Ru"
+          },
+          "uri": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "maxLength": 2083,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uri"
+          }
+        },
+        "required": [
+          "id",
+          "scheme",
+          "description"
+        ],
+        "title": "AddressClassification",
+        "type": "object"
+      },
+      "Buyer": {
+        "description": "Buyer (procuring entity) organization",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name En"
+          },
+          "identifier": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "additionalIdentifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Identifier"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalidentifiers"
+          },
+          "additionalContactPoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContactPoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalcontactpoints"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contactPoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContactPoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contract_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Owner"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcuringEntityKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "signerInfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignerInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "identifier"
+        ],
+        "title": "Buyer",
+        "type": "object"
+      },
+      "ContactPoint": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name En"
+          },
+          "name_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name Ru"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Email"
+          },
+          "telephone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Telephone"
+          },
+          "faxNumber": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Faxnumber"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "maxLength": 2083,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ContactPoint",
+        "type": "object"
+      },
+      "DecisionDBModel": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/ViolationReportResolution"
+          },
+          "description": {
+            "description": "Опис рішення",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи рішення (від ЦЗО)",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "dateModified": {
+            "description": "Дата оновлення",
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          },
+          "datePublished": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Дата публікації",
+            "title": "Datepublished"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DraftActiveObjectStatus",
+            "default": "draft"
+          }
+        },
+        "required": [
+          "id",
+          "resolution",
+          "description",
+          "dateModified"
+        ],
+        "title": "DecisionDBModel",
+        "type": "object"
+      },
+      "DefendantStatementDBModel": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "description": "Контраргументи / Позиція постачальника",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи Постачальника (відповідача)",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "dateModified": {
+            "description": "Дата оновлення",
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          },
+          "datePublished": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Дата публікації",
+            "title": "Datepublished"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DraftActiveObjectStatus",
+            "default": "draft"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "dateModified"
+        ],
+        "title": "DefendantStatementDBModel",
+        "type": "object"
+      },
+      "Document": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "dateModified": {
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          },
+          "datePublished": {
+            "format": "date-time",
+            "title": "Datepublished",
+            "type": "string"
+          },
+          "documentType": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentTypes"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "title_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title En"
+          },
+          "title_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title Ru"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description En"
+          },
+          "description_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description Ru"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "pattern": "^[-\\w]+/[-\\.\\w\\+]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Format"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentLanguage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "uk"
+          },
+          "relatedItem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relateditem"
+          }
+        },
+        "required": [
+          "hash",
+          "url",
+          "dateModified",
+          "datePublished"
+        ],
+        "title": "Document",
+        "type": "object"
+      },
+      "DocumentLanguage": {
+        "enum": [
+          "uk",
+          "en",
+          "ru"
+        ],
+        "title": "DocumentLanguage",
+        "type": "string"
+      },
+      "DocumentTypes": {
+        "enum": [
+          "tenderNotice",
+          "awardNotice",
+          "contractNotice",
+          "notice",
+          "biddingDocuments",
+          "technicalSpecifications",
+          "evaluationCriteria",
+          "clarifications",
+          "shortlistedFirms",
+          "riskProvisions",
+          "billOfQuantity",
+          "bidders",
+          "conflictOfInterest",
+          "debarments",
+          "evaluationReports",
+          "winningBid",
+          "complaints",
+          "contractSigned",
+          "contractArrangements",
+          "contractSchedule",
+          "contractAnnexe",
+          "contractGuarantees",
+          "subContract",
+          "eligibilityCriteria",
+          "contractProforma",
+          "commercialProposal",
+          "qualificationDocuments",
+          "eligibilityDocuments",
+          "registerExtract",
+          "registerUSR",
+          "registerFiscal",
+          "evidence",
+          "register",
+          "contractSignature",
+          "violationReportSignature",
+          "violationReportEvidence",
+          "acceptanceReport"
+        ],
+        "title": "DocumentTypes",
+        "type": "string"
+      },
+      "DraftActiveObjectStatus": {
+        "enum": [
+          "draft",
+          "active"
+        ],
+        "title": "DraftActiveObjectStatus",
+        "type": "string"
+      },
+      "Identifier": {
+        "properties": {
+          "id": {
+            "title": "Id"
+          },
+          "scheme": {
+            "title": "Scheme",
+            "type": "string"
+          },
+          "legalName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legalname"
+          },
+          "legalName_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legalname En"
+          },
+          "legalName_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legalname Ru"
+          },
+          "uri": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "maxLength": 2083,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uri"
+          }
+        },
+        "required": [
+          "id",
+          "scheme"
+        ],
+        "title": "Identifier",
+        "type": "object"
+      },
+      "OrganizationScale": {
+        "enum": [
+          "micro",
+          "sme",
+          "mid",
+          "large",
+          "not specified"
+        ],
+        "title": "OrganizationScale",
+        "type": "string"
+      },
+      "Period": {
+        "description": "Time period with start and end dates",
+        "properties": {
+          "startDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The start date for the period",
+            "title": "Startdate"
+          },
+          "endDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The end date for the period",
+            "title": "Enddate"
+          }
+        },
+        "title": "Period",
+        "type": "object"
+      },
+      "ProcuringEntity": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name En"
+          },
+          "identifier": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "additionalIdentifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Identifier"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalidentifiers"
+          },
+          "additionalContactPoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContactPoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalcontactpoints"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contactPoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContactPoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contract_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Owner"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProcuringEntityKind",
+            "default": "general"
+          }
+        },
+        "required": [
+          "name",
+          "identifier"
+        ],
+        "title": "ProcuringEntity",
+        "type": "object"
+      },
+      "ProcuringEntityKind": {
+        "enum": [
+          "authority",
+          "central",
+          "defense",
+          "general",
+          "other",
+          "social",
+          "special"
+        ],
+        "title": "ProcuringEntityKind",
+        "type": "string"
+      },
+      "ReportDetails": {
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ViolationReportReason",
+            "description": "Тип звернення"
+          },
+          "description": {
+            "description": "Суть порушення",
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи Замовника (скаржника)",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "dateModified": {
+            "description": "Дата оновлення",
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "description",
+          "documents",
+          "dateModified"
+        ],
+        "title": "ReportDetails",
+        "type": "object"
+      },
+      "SignerInfo": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "telephone": {
+            "title": "Telephone",
+            "type": "string"
+          },
+          "iban": {
+            "title": "Iban",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "string"
+          },
+          "authorizedBy": {
+            "title": "Authorizedby",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "telephone",
+          "iban",
+          "position",
+          "authorizedBy"
+        ],
+        "title": "SignerInfo",
+        "type": "object"
+      },
+      "Supplier": {
+        "description": "Supplier organization",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name En"
+          },
+          "identifier": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "additionalIdentifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Identifier"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalidentifiers"
+          },
+          "additionalContactPoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContactPoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Additionalcontactpoints"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contactPoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContactPoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contract_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contract Owner"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationScale"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "signerInfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignerInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "identifier"
+        ],
+        "title": "Supplier",
+        "type": "object"
+      },
+      "ViolationReportReason": {
+        "enum": [
+          "goodsNonCompliance",
+          "contractBreach",
+          "signingRefusal"
+        ],
+        "title": "ViolationReportReason",
+        "type": "string"
+      },
+      "ViolationReportResolution": {
+        "enum": [
+          "satisfied",
+          "declinedNoViolation"
+        ],
+        "title": "ViolationReportResolution",
+        "type": "string"
+      },
+      "ViolationReportStatus": {
+        "enum": [
+          "draft",
+          "pending",
+          "satisfied",
+          "declined"
+        ],
+        "title": "ViolationReportStatus",
+        "type": "string"
+      },
+      "PostDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "title_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title En"
+          },
+          "title_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title Ru"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description En"
+          },
+          "description_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description Ru"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentLanguage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "uk"
+          },
+          "relatedItem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relateditem"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          },
+          "documentType": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentTypes"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "format": {
+            "anyOf": [
+              {
+                "pattern": "^[-\\w]+/[-\\.\\w\\+]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Format"
+          }
+        },
+        "required": [
+          "hash",
+          "url"
+        ],
+        "title": "PostDocument",
+        "type": "object"
+      },
+      "ReportDetailsPostRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ViolationReportReason"
+          },
+          "description": {
+            "description": "Деталі порушення",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи Замовника (скаржника)",
+            "items": {
+              "$ref": "#/components/schemas/PostDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reason",
+          "description"
+        ],
+        "title": "ReportDetailsPostRequestData",
+        "type": "object"
+      },
+      "ViolationReportPostRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/ReportDetailsPostRequestData"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ViolationReportStatus",
+            "default": "draft"
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "title": "ViolationReportPostRequestData",
+        "type": "object"
+      },
+      "ViolationReportDBModel": {
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/ReportDetails"
+          },
+          "_id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "_rev": {
+            "default": "",
+            "title": "Rev",
+            "type": "string"
+          },
+          "public_modified": {
+            "default": 0,
+            "title": "Public Modified",
+            "type": "number"
+          },
+          "violationReportID": {
+            "description": "Більш візуально прийнятний ідентифікатор",
+            "title": "Violationreportid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ViolationReportStatus",
+            "default": "draft"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "const": "test",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Тест мод (з тендера)",
+            "title": "Mode"
+          },
+          "tender_id": {
+            "title": "Tender Id",
+            "type": "string"
+          },
+          "contract_id": {
+            "title": "Contract Id",
+            "type": "string"
+          },
+          "dateCreated": {
+            "description": "Дата створення",
+            "format": "date-time",
+            "title": "Datecreated",
+            "type": "string"
+          },
+          "dateModified": {
+            "description": "Дата оновлення",
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          },
+          "datePublished": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Дата публікації",
+            "title": "Datepublished"
+          },
+          "author": {
+            "$ref": "#/components/schemas/Buyer",
+            "description": "Інформація про Замовника (скаржника)"
+          },
+          "defendants": {
+            "description": "Інформація про Постачальника (відповідача)",
+            "items": {
+              "$ref": "#/components/schemas/Supplier"
+            },
+            "minItems": 1,
+            "title": "Defendants",
+            "type": "array"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/ProcuringEntity",
+            "default": null,
+            "description": "Інформація про ЦЗО (власник відбору)"
+          },
+          "defendantPeriod": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Period"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Період коли відповідачу дозволено надавати пояснення"
+          },
+          "defendantStatements": {
+            "description": "Контраргументи Постачальника",
+            "items": {
+              "$ref": "#/components/schemas/DefendantStatementDBModel"
+            },
+            "title": "Defendantstatements",
+            "type": "array"
+          },
+          "decisions": {
+            "description": "Рішення ЦЗО",
+            "items": {
+              "$ref": "#/components/schemas/DecisionDBModel"
+            },
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "details",
+          "violationReportID",
+          "tender_id",
+          "contract_id",
+          "dateCreated",
+          "dateModified",
+          "author",
+          "defendants"
+        ],
+        "title": "ViolationReportDBModel",
+        "type": "object"
+      },
+      "ListingResponseDataModel": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "dateModified": {
+            "title": "Datemodified",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "dateModified"
+        ],
+        "title": "ListingResponseDataModel",
+        "type": "object"
+      },
+      "PageListingModel": {
+        "properties": {
+          "offset": {
+            "title": "Offset",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "offset",
+          "path",
+          "uri"
+        ],
+        "title": "PageListingModel",
+        "type": "object"
+      },
+      "ReportDetailsPatchRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ViolationReportReason"
+          },
+          "description": {
+            "description": "Деталі порушення",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "description"
+        ],
+        "title": "ReportDetailsPatchRequestData",
+        "type": "object"
+      },
+      "ViolationReportPatchDetailsRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/ReportDetailsPatchRequestData"
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "title": "ViolationReportPatchDetailsRequestData",
+        "type": "object"
+      },
+      "ViolationReportPublishRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ViolationReportStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ViolationReportPublishRequestData",
+        "type": "object"
+      },
+      "GetDocumentResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "dateModified": {
+            "format": "date-time",
+            "title": "Datemodified",
+            "type": "string"
+          },
+          "datePublished": {
+            "format": "date-time",
+            "title": "Datepublished",
+            "type": "string"
+          },
+          "documentType": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentTypes"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "title_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title En"
+          },
+          "title_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title Ru"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description En"
+          },
+          "description_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description Ru"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "pattern": "^[-\\w]+/[-\\.\\w\\+]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Format"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentLanguage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "uk"
+          },
+          "relatedItem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relateditem"
+          },
+          "previousVersions": {
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "title": "Previousversions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hash",
+          "url",
+          "dateModified",
+          "datePublished",
+          "previousVersions"
+        ],
+        "title": "GetDocumentResponse",
+        "type": "object"
+      },
+      "PatchDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "title_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title En"
+          },
+          "title_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title Ru"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description En"
+          },
+          "description_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description Ru"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentLanguage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "relatedItem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relateditem"
+          }
+        },
+        "title": "PatchDocument",
+        "type": "object"
+      },
+      "DefendantStatementPostRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Пояснення/контраргументи постачальника",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи відповідача (постачальника)",
+            "items": {
+              "$ref": "#/components/schemas/PostDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "DefendantStatementPostRequestData",
+        "type": "object"
+      },
+      "DefendantStatementActivateRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "active",
+            "description": "Статус (відправляється для публікації об'єкта)",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DefendantStatementActivateRequestData",
+        "type": "object"
+      },
+      "DefendantStatementPatchRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Пояснення/контраргументи постачальника",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "DefendantStatementPatchRequestData",
+        "type": "object"
+      },
+      "DecisionPostRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/ViolationReportResolution"
+          },
+          "description": {
+            "description": "Обґрунтування рішення",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          },
+          "documents": {
+            "description": "Документи",
+            "items": {
+              "$ref": "#/components/schemas/PostDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resolution",
+          "description"
+        ],
+        "title": "DecisionPostRequestData",
+        "type": "object"
+      },
+      "DecisionActivateRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "active",
+            "description": "Статус (відправляється для публікації об'єкта)",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DecisionActivateRequestData",
+        "type": "object"
+      },
+      "DecisionPatchRequestData": {
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/ViolationReportResolution"
+          },
+          "description": {
+            "description": "Пояснення/контраргументи постачальника",
+            "maxLength": 5000,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resolution",
+          "description"
+        ],
+        "title": "DecisionPatchRequestData",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization"
+      }
+    }
+  }
+}
