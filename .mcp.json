@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "prozorro": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "prozorro-mcp"]
+    }
+  }
+}
