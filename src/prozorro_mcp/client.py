@@ -118,8 +118,11 @@ class ProzorroClient:
         offset: str | None = None,
         limit: int = 1000,
         max_pages: int | None = None,
-    ) -> AsyncIterator[list[dict[str, Any]]]:
-        """Yield feed pages. Descending order walks from the newest modification backwards."""
+    ) -> AsyncIterator[tuple[list[dict[str, Any]], str | None]]:
+        """Yield (page items, offset of the next page). Descending order walks from the newest modification back.
+
+        The next-page offset can be stored and passed back as `offset` to resume the walk later.
+        """
         params: dict[str, Any] = {"limit": limit}
         if descending:
             params["descending"] = 1
@@ -133,9 +136,9 @@ class ProzorroClient:
             data = page.get("data") or []
             if not data:
                 return
-            yield data
+            next_offset = (page.get("next_page") or {}).get("offset") or None
+            yield data, next_offset
             pages += 1
-            next_offset = (page.get("next_page") or {}).get("offset")
             if not next_offset or (max_pages and pages >= max_pages):
                 return
             params["offset"] = next_offset

@@ -48,6 +48,11 @@ async def test_mcp_stdio_end_to_end(tmp_path):
             st = payload(await client.call_tool("status", {}))
             assert st["counts"]["relevant_tenders"] == 3
 
+            summary = payload(
+                await client.call_tool("summarize_tenders", {"period_from": "today", "period_mode": "either"})
+            )
+            assert summary["tenders"] == 3 and summary["top_winners_by_amount"][0]["edrpou"] == "12345678"
+
             xlsx = payload(await client.call_tool("export_excel", {"stage": "all", "file_name": "звіт"}))
             assert xlsx["path"].endswith("звіт.xlsx") and xlsx["rows"]["Тендери"] == 3
             assert (tmp_path / "out" / "Експорт" / "звіт.xlsx").exists()

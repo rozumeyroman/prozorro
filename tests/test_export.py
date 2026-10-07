@@ -33,10 +33,14 @@ async def test_export_excel(fake, tender_filter, tmp_path):
     db = await synced_db(fake, tender_filter)
     path = tmp_path / "out.xlsx"
     counts = export_tenders(select_tenders(db, TenderQuery()), path, tender_filter)
+    counts.pop("Аналітика")
     assert counts == {"Тендери": 3, "Позиції": 4, "Переможці": 1, "Пропозиції": 2, "Ціни за одиницю": 1}
 
     wb = load_workbook(path)
-    assert wb.sheetnames == ["Тендери", "Позиції", "Переможці", "Пропозиції", "Ціни за одиницю"]
+    assert wb.sheetnames == ["Аналітика", "Тендери", "Позиції", "Переможці", "Пропозиції", "Ціни за одиницю"]
+    summary = {r[0]: r[1] for r in wb["Аналітика"].iter_rows(values_only=True) if r and r[0]}
+    assert summary["Тендерів"] == 3
+    assert summary["Медіанна знижка від очікуваної вартості"] == 0.18
     ws = wb["Тендери"]
     header = [c.value for c in ws[1]]
     rows = {r[1].value: r for r in ws.iter_rows(min_row=2)}
@@ -56,3 +60,13 @@ async def test_export_excel(fake, tender_filter, tmp_path):
     assert sorted(b[8] or "" for b in bids) == ["", "так"]
     prices = list(wb["Ціни за одиницю"].iter_rows(min_row=2, values_only=True))
     assert prices[0][7] == 98_000
+
+
+async def test_period_mode(fake, tender_filter):
+    db = await synced_db(fake, tender_filter)
+    day = NOW.strftime("%Y-%m-%d")
+    # all three were announced today; only one has a decision today
+    assert len(select_tenders(db, TenderQuery(period_from=day, period_mode="created"))) == 3
+    assert len(select_tenders(db, TenderQuery(period_from=day, period_mode="awarded"))) == 1
+    assert len(select_tenders(db, TenderQuery(period_from=day, period_mode="either"))) == 3
+    assert len(select_tenders(db, TenderQuery(period_from="2030-01-01", period_mode="either"))) == 0

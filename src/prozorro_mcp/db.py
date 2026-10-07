@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS tender_matches (
     PRIMARY KEY (tender, profile)
 );
 
+-- For ad-hoc SQL: one row per (tender, profile) with profile-specific topics and relevant value.
+CREATE VIEW IF NOT EXISTS tender_profile_view AS
+SELECT m.profile, m.topics, m.relevant_value, m.reason AS filter_reason,
+       t.id, t.tender_id, t.title, t.status, t.procurement_method_type, t.entity_name, t.entity_edrpou,
+       t.entity_region, t.value_amount, t.currency, t.date_created, t.date_modified, t.tender_period_end, t.data
+FROM tender_matches m JOIN tenders t ON t.id = m.tender;
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -109,6 +116,13 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        # relevant_value/topics used to hold the values of the profile a tender was synced with, which went stale
+        # after switching profiles; the per-profile values live in tender_matches.
+        self.conn.execute(
+            "UPDATE tenders SET relevant_value = NULL, topics = NULL "
+            "WHERE relevant_value IS NOT NULL OR topics IS NOT NULL"
+        )
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -219,8 +233,8 @@ class Database:
                     (pe.get("address") or {}).get("region"),
                     value.get("amount"),
                     value.get("currency"),
-                    decision.relevant_value,
-                    ",".join(decision.topics),
+                    None,  # relevant_value: per filter profile, see tender_matches / tender_profile_view
+                    None,  # topics: per filter profile, see tender_matches / tender_profile_view
                     tender.get("dateCreated") or tender.get("date"),
                     tender.get("dateModified"),
                     (tender.get("tenderPeriod") or {}).get("endDate"),
@@ -276,7 +290,8 @@ class Database:
         come from that profile's evaluation.
         """
         where, args = [], []
-        join, topics_col, value_col = "", "t.topics", "t.relevant_value"
+        # Without a profile there is no relevant value or topic: fall back to the whole tender value.
+        join, topics_col, value_col = "", "NULL", "t.value_amount"
         if profile:
             join = "JOIN tender_matches m ON m.tender = t.id AND m.profile = ?"
             args.append(profile)
@@ -354,6 +369,15 @@ class Database:
             (now_iso(), json.dumps(stats, ensure_ascii=False), run_id),
         )
         self.conn.commit()
+
+    def last_finished_run(self, filter_name: str) -> dict[str, Any] | None:
+        for row in self.conn.execute(
+            "SELECT * FROM sync_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 200"
+        ).fetchall():
+            params = json.loads(row["params"] or "{}")
+            if params.get("filter") == filter_name:
+                return {**dict(row), "params": params}
+        return None
 
     def last_run(self) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1").fetchone()

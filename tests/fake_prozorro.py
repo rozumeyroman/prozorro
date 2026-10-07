@@ -270,6 +270,10 @@ class FakeProzorro:
         self.page_size = page_size
         self.requests: list[str] = []
         self.base = "http://fake"
+        # failure injection for tests
+        self.fail_feed_after: int | None = None  # feed requests after this many fail with HTTP 500
+        self.fail_files: set[str] = set()  # document keys whose download fails with HTTP 500
+        self.feed_calls = 0
 
     def feed(self, params: dict[str, str]) -> dict[str, Any]:
         ordered = sorted(self.tenders.values(), key=lambda t: t["dateModified"], reverse=bool(params.get("descending")))
@@ -290,12 +294,17 @@ class FakeProzorro:
         params = {k: v[0] for k, v in parse_qs(query).items()}
         if path.startswith("/get/"):  # document service: redirect like the real one
             return 302, b"", {"Location": f"{self.base}/files/{path[5:]}"}
+        if path.startswith("/files/") and path[7:] in self.fail_files:
+            return 500, b"error", {"Content-Type": "text/plain"}
         if path.startswith("/files/"):
             return 200, b"%PDF-fake " + path.encode(), {"Content-Type": "application/octet-stream"}
         if path.startswith(API_PREFIX):
             path = path[len(API_PREFIX) :]
         body: dict[str, Any] | None = None
         if path == "/tenders":
+            self.feed_calls += 1
+            if self.fail_feed_after is not None and self.feed_calls > self.fail_feed_after:
+                return 500, b"error", {"Content-Type": "text/plain"}
             body = self.feed(params)
         elif path.startswith("/tenders/"):
             t = self.tenders.get(path.split("/")[2])

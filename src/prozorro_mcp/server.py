@@ -11,16 +11,17 @@ from typing import Annotated, Any, Literal
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import Field
 
+from .analytics import summarize
 from .client import NotFound, ProzorroClient, ProzorroError
 from .db import Database
-from .documents import DocumentDownloader, safe_name
+from .documents import DocumentDownloader, prune_folders, safe_name
 from .export import export_tenders
 from .filter import TenderFilter
 from .profiles import FilterError, FilterRegistry, ensure_matches
-from .selection import TenderQuery, select_tenders
+from .selection import TenderQuery, select_rows, select_tenders
 from .settings import KYIV_TZ, Settings
 from .summary import documents_list, tender_summary, tender_url
-from .sync import Syncer, parse_since
+from .sync import Syncer, SyncError, parse_since, resolve_since
 
 INSTRUCTIONS = """\
 Інструменти для аналізу публічних закупівель Prozorro (Україна) за темами: кібербезпека, мережеве та серверне
@@ -33,7 +34,8 @@ INSTRUCTIONS = """\
 Фільтри: активний профіль (list_filters, use_filter) діє в усіх інструментах, доки користувач не попросить змінити.
 Параметр `filter` в окремому виклику застосовує інший профіль лише до цього виклику. Щоб змінити умови відбору
 (поріг, коди, ключові слова), використовуйте save_filter.
-4. export_excel: вивантаження в Excel (основний формат, яким користується користувач).
+4. summarize_tenders: підсумки й топи по вибірці; export_excel: вивантаження в Excel (основний формат
+   користувача, з аркушем «Аналітика»).
 5. download_documents: тендерна документація в теки «Замовник - Предмет - UA-ID».
 Посилання на тендер для людини: поле url (prozorro.gov.ua/tender/UA-...).
 """
@@ -138,37 +140,103 @@ async def status() -> dict[str, Any]:
     }
 
 
+StageParam = Annotated[
+    Literal["active", "complete", "all"],
+    Field(
+        description="active: тендери, що тривають (будь-який active.*); complete: завершені (договір підписано); all"
+    ),
+]
+DateParam = Annotated[str | None, Field(description="Формат: 'today', 'yesterday', '7d', '2026-10-01' або ISO-час")]
+PeriodModeParam = Annotated[
+    Literal["created", "awarded", "either"],
+    Field(
+        description="До чого застосувати period_from/period_to: created — дата оголошення; awarded — дата рішення "
+        "про переможця чи підписання договору; either — будь-яка з них (оголошені АБО з рішенням за період)"
+    ),
+]
+
+
+def build_query(
+    *,
+    query: str | None = None,
+    topic: str | None = None,
+    stage: str = "all",
+    status: list[str] | None = None,
+    min_value: float | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    awarded_from: str | None = None,
+    awarded_to: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    period_mode: str = "created",
+    profile: str | None = None,
+    limit: int | None = None,
+) -> TenderQuery:
+    return TenderQuery(
+        query=query,
+        topic=topic,
+        stage=stage,  # type: ignore[arg-type]
+        status=status,
+        min_value=min_value,
+        created_from=created_from,
+        created_to=created_to,
+        awarded_from=awarded_from,
+        awarded_to=awarded_to,
+        period_from=period_from,
+        period_to=period_to,
+        period_mode=period_mode,  # type: ignore[arg-type]
+        profile=profile,
+        limit=limit,
+    )
+
+
 @mcp.tool()
 async def sync_tenders(
     ctx: Context,
     since: Annotated[
-        str, Field(description="Початок періоду: 'today', 'yesterday', '24h', '3d', дата '2026-10-06' або ISO-час")
+        str,
+        Field(
+            description="Початок періоду: 'today', 'yesterday', '24h', '3d', дата '2026-10-06', ISO-час або 'last' "
+            "(від попередньої синхронізації з цим фільтром: щоденне оновлення без повторного проходу)"
+        ),
     ] = "today",
     only_new: Annotated[
         bool,
         Field(description="True: лише тендери, створені після since. False: також старші тендери, змінені після since"),
     ] = True,
+    until: Annotated[
+        str | None, Field(description="Лише тендери, створені до цієї дати (не включно), напр. кінець кварталу")
+    ] = None,
+    resume: Annotated[bool, Field(description="Продовжити перервану синхронізацію з місця зупинки")] = False,
     filter: FilterParam = None,
 ) -> dict[str, Any]:
     """Завантажити з Prozorro тендери за період і зберегти релевантні у локальну базу.
 
-    Проходить фід змін від найновіших до `since`, відкидає нецікаві тендери за типом процедури та сумою лотів,
-    решту завантажує повністю і перевіряє тему (CPV, ключові слова) та очікувану вартість.
-    Повертає статистику відсіювання по шарах і кількість знайдених тендерів.
+    Проходить стрічку змін від найновіших до `since`, відкидає нецікаві тендери за типом процедури та сумою лотів,
+    решту завантажує повністю і перевіряє тему (CPV, ключові слова) та очікувану вартість. Результат зберігається
+    після кожної сторінки стрічки, тож перервану синхронізацію можна продовжити (resume=true).
+    Великі періоди (тижні й більше) краще запускати з терміналу: `prozorro-mcp sync`.
     """
-    since_dt = parse_since(since)
     f = tender_filter(filter)
 
     def report(msg: str) -> None:
         # Syncer reports synchronously; send the MCP log message in the background.
         asyncio.ensure_future(ctx.info(msg))
 
-    async with client() as c:
-        syncer = Syncer(c, db(), f, settings().concurrency, progress=report)
-        stats = await syncer.sync(since_dt, only_new=only_new)
+    try:
+        since_dt = None if resume else resolve_since(since, db(), f.name)
+        async with client() as c:
+            syncer = Syncer(c, db(), f, settings().concurrency, progress=report)
+            stats = await syncer.sync(
+                since_dt, only_new=only_new, until=parse_since(until) if until else None, resume=resume
+            )
+    except SyncError as e:
+        raise ValueError(str(e)) from e
     ensure_matches(db(), f)
-    stats["since_kyiv"] = since_dt.astimezone(KYIV_TZ).isoformat(timespec="minutes")
-    stats["relevant_in_db_created_since"] = db().search(created_from=since_dt.isoformat(), limit=0, profile=f.name)[1]
+    since_used = datetime.fromisoformat(stats["since"])
+    stats["since_kyiv"] = since_used.astimezone(KYIV_TZ).isoformat(timespec="minutes")
+    stats["relevant_in_db_created_since"] = db().search(created_from=since_used.isoformat(), limit=0, profile=f.name)[1]
     return stats
 
 
@@ -176,14 +244,18 @@ async def sync_tenders(
 async def search_tenders(
     query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
     topic: TopicParam = None,
-    min_value: Annotated[float | None, Field(description="Мінімальна вартість релевантних лотів, грн")] = None,
-    created_from: Annotated[
-        str | None, Field(description="Створені з (since-формат: 'today', '7d', '2026-10-01')")
-    ] = None,
-    created_to: Annotated[str | None, Field(description="Створені до (не включно), той самий формат")] = None,
+    stage: StageParam = "all",
     status: Annotated[
-        list[str] | None, Field(description="Статуси, напр. ['active.tendering'] для тих, що приймають пропозиції")
+        list[str] | None, Field(description="Точні статуси, напр. ['active.tendering'] (замість stage)")
     ] = None,
+    min_value: Annotated[float | None, Field(description="Мінімальна вартість релевантних лотів, грн")] = None,
+    created_from: DateParam = None,
+    created_to: DateParam = None,
+    awarded_from: DateParam = None,
+    awarded_to: DateParam = None,
+    period_from: DateParam = None,
+    period_to: DateParam = None,
+    period_mode: PeriodModeParam = "created",
     sort: Literal["date_desc", "date_asc", "value_desc", "value_asc", "deadline_asc"] = "date_desc",
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
     offset: Annotated[int, Field(ge=0)] = 0,
@@ -191,26 +263,70 @@ async def search_tenders(
 ) -> dict[str, Any]:
     """Пошук релевантних тендерів у локальній базі (спершу виконайте sync_tenders за потрібний період).
 
-    Показує лише тендери, що проходять активний фільтр (або вказаний у `filter`).
-    Повертає сторінку результатів і total (усього збігів), щоб можна було гортати через offset.
+    Показує лише тендери, що проходять активний фільтр (або вказаний у `filter`). Умови created_*/awarded_*
+    поєднуються через І; для «оголошені АБО з рішенням за період» використовуйте period_* з period_mode=either.
+    Повертає сторінку результатів і total, щоб гортати через offset. Для підсумків і топів — summarize_tenders.
     """
     f = profile_filter(filter)
-    rows, total = db().search(
-        profile=f.name,
+    q = build_query(
         query=query,
         topic=topic,
+        stage=stage,
+        status=status,
         min_value=min_value,
-        created_from=parse_since(created_from).isoformat() if created_from else None,
-        created_to=parse_since(created_to).isoformat() if created_to else None,
-        statuses=status,
-        sort=sort,
-        limit=limit,
-        offset=offset,
+        created_from=created_from,
+        created_to=created_to,
+        awarded_from=awarded_from,
+        awarded_to=awarded_to,
+        period_from=period_from,
+        period_to=period_to,
+        period_mode=period_mode,
+        profile=f.name,
     )
+    rows, total = select_rows(db(), q, sort=sort, limit=limit, offset=offset)
     for r in rows:
         r["url"] = tender_url({"tenderID": r["tender_id"]})
         r["matched_items"] = db().matched_items(r["id"], f.name)
     return {"filter": f.name, "total": total, "offset": offset, "count": len(rows), "results": rows}
+
+
+@mcp.tool()
+async def summarize_tenders(
+    query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
+    topic: TopicParam = None,
+    stage: StageParam = "all",
+    status: list[str] | None = None,
+    min_value: float | None = None,
+    created_from: DateParam = None,
+    created_to: DateParam = None,
+    awarded_from: DateParam = None,
+    awarded_to: DateParam = None,
+    period_from: DateParam = None,
+    period_to: DateParam = None,
+    period_mode: PeriodModeParam = "created",
+    top: Annotated[int, Field(ge=1, le=50)] = 10,
+    filter: FilterParam = None,
+) -> dict[str, Any]:
+    """Зведена аналітика по вибірці з локальної бази: кількість і сума тендерів; розбивка за статусом, темою й
+    місяцем; топ переможців і замовників за сумою та кількістю; середня кількість учасників і частка торгів з одним
+    учасником; медіанна та середня знижка від очікуваної вартості. Суми в гривнях."""
+    f = profile_filter(filter)
+    q = build_query(
+        query=query,
+        topic=topic,
+        stage=stage,
+        status=status,
+        min_value=min_value,
+        created_from=created_from,
+        created_to=created_to,
+        awarded_from=awarded_from,
+        awarded_to=awarded_to,
+        period_from=period_from,
+        period_to=period_to,
+        period_mode=period_mode,
+        profile=f.name,
+    )
+    return summarize(select_tenders(db(), q), f, top=top)
 
 
 @mcp.tool()
@@ -271,15 +387,6 @@ async def explain_filter(
     }
 
 
-StageParam = Annotated[
-    Literal["active", "complete", "all"],
-    Field(
-        description="active: тендери, що тривають (будь-який active.*); complete: завершені (договір підписано); all"
-    ),
-]
-DateParam = Annotated[str | None, Field(description="Формат since: 'today', 'yesterday', '7d', '2026-10-01'")]
-
-
 @mcp.tool()
 async def export_excel(
     query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
@@ -293,6 +400,10 @@ async def export_excel(
         str | None, Field(description="Лише тендери, де переможця визначено або договір підписано з цієї дати")
     ] = None,
     awarded_to: DateParam = None,
+    period_from: DateParam = None,
+    period_to: DateParam = None,
+    period_mode: PeriodModeParam = "created",
+    include_summary: Annotated[bool, Field(description="Додати перший аркуш «Аналітика»")] = True,
     file_name: Annotated[
         str | None, Field(description="Назва файлу без шляху; за замовчуванням з датою й часом")
     ] = None,
@@ -300,14 +411,13 @@ async def export_excel(
 ) -> dict[str, Any]:
     """Вивантажити тендери з локальної бази в Excel (.xlsx).
 
-    Аркуші: «Тендери» (з посиланнями на prozorro.gov.ua), «Позиції», «Переможці» (рішення, суми, знижка, договір),
-    «Пропозиції» (усі учасники та їхні суми), «Ціни за одиницю». Файл створюється в теці експорту користувача;
-    поверніть користувачу шлях до файлу. Дані беруться з локальної бази: спершу виконайте sync_tenders.
-    До файлу потрапляють лише тендери, що проходять активний фільтр (або вказаний у `filter`).
+    Аркуші: «Аналітика» (підсумки, розбивки, топи), «Тендери» (з посиланнями на prozorro.gov.ua), «Позиції»,
+    «Переможці» (рішення, суми, знижка, договір), «Пропозиції», «Ціни за одиницю». Файл створюється в теці
+    експорту користувача; поверніть користувачу шлях до файлу. Дані беруться з локальної бази: спершу виконайте
+    sync_tenders. До файлу потрапляють лише тендери, що проходять активний фільтр (або вказаний у `filter`).
     """
     f = profile_filter(filter)
-    q = TenderQuery(
-        profile=f.name,
+    q = build_query(
         query=query,
         topic=topic,
         stage=stage,
@@ -317,27 +427,40 @@ async def export_excel(
         created_to=created_to,
         awarded_from=awarded_from,
         awarded_to=awarded_to,
+        period_from=period_from,
+        period_to=period_to,
+        period_mode=period_mode,
+        profile=f.name,
     )
     tenders = select_tenders(db(), q)
     name = safe_name(file_name, 100) if file_name else f"prozorro_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}"
     if not name.lower().endswith(".xlsx"):
         name += ".xlsx"
     path = settings().output_dir / "Експорт" / name
-    counts = export_tenders(tenders, path, f)
+    note = None
+    if period_from or period_to:
+        note = f"Вибірка: період {period_from or '…'} — {period_to or '…'} ({period_mode})"
+    counts = export_tenders(tenders, path, f, include_summary=include_summary, period_note=note)
     return {"path": str(path), "filter": f.name, "rows": counts}
 
 
 @mcp.tool()
 async def download_documents(
     ctx: Context,
-    tender: Annotated[
-        str | None, Field(description="Один тендер: id, UA-… або посилання. Якщо не задано, діють фільтри нижче")
+    tenders: Annotated[
+        list[str] | None,
+        Field(description="Тендери: id, UA-… або посилання (один чи кілька). Якщо не задано, діє вибірка нижче"),
     ] = None,
     stage: StageParam = "all",
     topic: TopicParam = None,
     query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
     created_from: DateParam = None,
-    awarded_from: Annotated[str | None, Field(description="Переможця визначено/договір підписано з цієї дати")] = None,
+    created_to: DateParam = None,
+    awarded_from: DateParam = None,
+    awarded_to: DateParam = None,
+    period_from: DateParam = None,
+    period_to: DateParam = None,
+    period_mode: PeriodModeParam = "created",
     include_bid_documents: Annotated[
         bool, Field(description="Також документи пропозицій учасників (технічні та цінові пропозиції), якщо публічні")
     ] = False,
@@ -348,20 +471,25 @@ async def download_documents(
     """Завантажити тендерну документацію в теки на диску користувача.
 
     Тека кожного тендера: «<Замовник> - <Предмет закупівлі> - <UA-ID>» у теці «Документи». Перед завантаженням
-    тендер оновлюється з API Prozorro. Повторний запуск докачує лише нові або змінені документи.
-    Можна передати один тендер або вибрати тендери з локальної бази фільтрами (stage=active — ті, що тривають;
-    stage=complete — завершені).
+    тендер оновлюється з API Prozorro. Облік ведеться після кожного файлу, тож повторний або перерваний запуск
+    докачує лише нові, змінені чи недокачані документи. Багато тендерів надійніше завантажувати з терміналу
+    (`prozorro-mcp docs`).
     """
-    if tender:
-        refs = [tender]
+    if tenders:
+        refs = list(tenders)
     else:
-        q = TenderQuery(
-            profile=profile_filter(filter).name,
+        q = build_query(
             query=query,
             topic=topic,
             stage=stage,
             created_from=created_from,
+            created_to=created_to,
             awarded_from=awarded_from,
+            awarded_to=awarded_to,
+            period_from=period_from,
+            period_to=period_to,
+            period_mode=period_mode,
+            profile=profile_filter(filter).name,
             limit=max_tenders,
         )
         refs = [t["id"] for t in select_tenders(db(), q)]
@@ -388,6 +516,21 @@ async def download_documents(
         "details": results,
         "errors": errors,
     }
+
+
+@mcp.tool()
+async def prune_documents(
+    confirm: Annotated[
+        bool, Field(description="false — лише показати, що буде видалено; true — видалити (після згоди користувача)")
+    ] = False,
+    filter: FilterParam = None,
+) -> dict[str, Any]:
+    """Прибрати теки документації тендерів, які не проходять активний фільтр (наприклад, після переходу на інший
+    профіль). Спершу викличте з confirm=false і покажіть користувачу список; видаляйте лише після його згоди.
+    Розглядаються тільки теки, створені download_documents (з файлом _documents.json)."""
+    f = profile_filter(filter)
+    keep = {t.get("tenderID") for t in select_tenders(db(), TenderQuery(profile=f.name))}
+    return {"filter": f.name, **prune_folders(settings().output_dir / "Документи", keep, confirm=confirm)}
 
 
 async def _fresh_tender(c: ProzorroClient, ref: str) -> dict[str, Any]:

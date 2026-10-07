@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,7 @@ MANIFEST = "_documents.json"
 BIDS_DIR = "Пропозиції учасників"
 # Windows forbids these characters in file names; the rest keeps names readable in Explorer/Finder.
 FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+INVISIBLE_CATEGORIES = {"Cc", "Cf", "Co", "Cs", "Cn"}
 RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 LEGAL_FORMS = [
     (re.compile(r"ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ", re.I), "ТОВ"),
@@ -37,8 +39,11 @@ LEGAL_FORMS = [
 def safe_name(text: str | None, max_len: int = 80, fallback: str = "без назви") -> str:
     """Make a string safe as a single path component on Windows, macOS and Linux."""
     s = unicodedata.normalize("NFC", text or "")
+    # Invisible characters (zero-width spaces, BOM, direction marks) make names that look identical differ;
+    # cloud drives (e.g. Google Drive) silently drop them, so the file would not be found again.
+    s = "".join(ch for ch in s if unicodedata.category(ch) not in INVISIBLE_CATEGORIES)
     s = FORBIDDEN.sub(" ", s)
-    s = re.sub(r"\s+", " ", s).strip(" .")
+    s = re.sub(r"\s+", " ", s).strip(" .")  # after \s+ -> " " only plain spaces are left
     if len(s) > max_len:
         s = s[:max_len].rstrip(" .") + "…"
     if not s or s in {".", ".."}:
@@ -147,8 +152,30 @@ class DocumentDownloader:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8")).get("documents", {})
 
         result = TenderDownload(tender.get("tenderID"), str(folder), tender_url(tender))
+
+        def save_manifest() -> None:
+            """Written after every file (atomically), so an interrupted run resumes where it stopped."""
+            tmp = manifest_path.with_name(MANIFEST + ".part")
+            tmp.write_text(
+                json.dumps(
+                    {
+                        "tenderID": tender.get("tenderID"),
+                        "url": tender_url(tender),
+                        "title": tender.get("title"),
+                        "status": tender.get("status"),
+                        "documents": manifest,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            tmp.replace(manifest_path)
+
         taken: dict[str, set[str]] = {}
         for entry in manifest.values():
+            # Manifests written by older versions may hold names that safe_name now cleans up.
+            entry["file"] = safe_name(entry["file"], 200, entry["file"])
             taken.setdefault(entry["subdir"], set()).add(entry["file"].lower())
 
         jobs = []
@@ -197,20 +224,42 @@ class DocumentDownloader:
                 "hash": d.get("hash"),
                 "size": size,
             }
+            save_manifest()
 
         await asyncio.gather(*(run(*j) for j in jobs))
-        manifest_path.write_text(
-            json.dumps(
-                {
-                    "tenderID": tender.get("tenderID"),
-                    "url": tender_url(tender),
-                    "title": tender.get("title"),
-                    "status": tender.get("status"),
-                    "documents": manifest,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        save_manifest()
         return result
+
+
+def list_tender_folders(root: Path) -> list[dict[str, Any]]:
+    """Folders under `root` that this tool created (they hold a manifest), with their tender id and size."""
+    out = []
+    if not root.is_dir():
+        return out
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        manifest = folder / MANIFEST
+        if not manifest.exists():
+            continue
+        try:
+            tender_id = json.loads(manifest.read_text(encoding="utf-8")).get("tenderID")
+        except (OSError, ValueError):
+            continue
+        size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+        out.append({"folder": str(folder), "tenderID": tender_id, "megabytes": round(size / 1_048_576, 1)})
+    return out
+
+
+def prune_folders(root: Path, keep_tender_ids: set[str], confirm: bool = False) -> dict[str, Any]:
+    """Folders of tenders that are not in `keep_tender_ids`. Deleted only with confirm=True.
+
+    Only folders with a manifest (created by download_documents) are considered; anything else is left alone.
+    """
+    stale = [f for f in list_tender_folders(root) if f["tenderID"] not in keep_tender_ids]
+    if confirm:
+        for f in stale:
+            shutil.rmtree(f["folder"])
+    return {
+        "deleted" if confirm else "would_delete": stale,
+        "count": len(stale),
+        "megabytes": round(sum(f["megabytes"] for f in stale), 1),
+    }

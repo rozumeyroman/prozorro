@@ -107,7 +107,13 @@ class _Sheet:
         return self.ws.max_row - 1
 
 
-def export_tenders(tenders: list[dict[str, Any]], path: Path, tender_filter: TenderFilter) -> dict[str, int]:
+def export_tenders(
+    tenders: list[dict[str, Any]],
+    path: Path,
+    tender_filter: TenderFilter,
+    include_summary: bool = True,
+    period_note: str | None = None,
+) -> dict[str, int]:
     wb = Workbook()
     s_tenders = _Sheet(
         wb.active,
@@ -208,7 +214,14 @@ def export_tenders(tenders: list[dict[str, Any]], path: Path, tender_filter: Ten
     for t in tenders:
         _add_tender(t, tender_filter, s_tenders, s_items, s_awards, s_bids, s_prices)
 
-    counts = {
+    counts = {}
+    if include_summary:
+        from .analytics import summarize  # analytics reuses this module's helpers
+
+        ws = wb.create_sheet("Аналітика", 0)
+        counts["Аналітика"] = write_summary(ws, summarize(tenders, tender_filter), period_note)
+        wb.active = 0
+    counts |= {
         "Тендери": s_tenders.finish(),
         "Позиції": s_items.finish(),
         "Переможці": s_awards.finish(),
@@ -385,3 +398,75 @@ def _discount(price: dict[str, Any] | None, expected: dict[str, Any] | None) -> 
     if (price or {}).get("valueAddedTaxIncluded") != (expected or {}).get("valueAddedTaxIncluded"):
         return None
     return round(1 - p / e, 4)
+
+
+SECTION_FONT = Font(bold=True, size=12, color="1F4E78")
+
+
+def write_summary(ws: Worksheet, summary: dict[str, Any], period_note: str | None = None) -> int:
+    """Summary sheet: key figures and breakdown tables one under another. Returns the number of filled rows."""
+    ws.column_dimensions["A"].width = 44
+    for col in "BCDE":
+        ws.column_dimensions[col].width = 18
+
+    def section(title: str) -> None:
+        if ws.max_row > 1:
+            ws.append([])
+        ws.append([title])
+        ws.cell(row=ws.max_row, column=1).font = SECTION_FONT
+
+    def header(*names: str) -> None:
+        ws.append(list(names))
+        for i in range(1, len(names) + 1):
+            c = ws.cell(row=ws.max_row, column=i)
+            c.fill, c.font = HEADER_FILL, HEADER_FONT
+
+    def row(values: list[Any], formats: list[str | None]) -> None:
+        ws.append(values)
+        for i, fmt in enumerate(formats, start=1):
+            if fmt:
+                ws.cell(row=ws.max_row, column=i).number_format = fmt
+
+    ws.append([f"Аналітика за фільтром «{summary['filter']}»"])
+    ws.cell(row=1, column=1).font = Font(bold=True, size=14)
+    if period_note:
+        ws.append([period_note])
+
+    section("Підсумок")
+    comp, disc = summary["competition"], summary["discount"]
+    for label, value, fmt in [
+        ("Тендерів", summary["tenders"], None),
+        ("Очікувана вартість релевантних лотів, грн", summary["expected_value_uah"], MONEY),
+        ("Рішень про переможця", summary["awards"], None),
+        ("Сума рішень про переможця, грн", summary["awarded_value_uah"], MONEY),
+        ("Середня кількість учасників", comp.get("avg_bidders"), "0.00"),
+        ("Частка торгів з одним учасником", comp.get("single_bidder_share"), PERCENT),
+        ("Медіанна знижка від очікуваної вартості", disc.get("median"), PERCENT),
+        ("Середня знижка від очікуваної вартості", disc.get("mean"), PERCENT),
+    ]:
+        row([label, value], [None, fmt])
+    if summary["non_uah_tenders"]:
+        ws.append([f"Тендерів в іншій валюті (не враховані в сумах): {summary['non_uah_tenders']}"])
+
+    for title, key in [("За статусом", "by_status"), ("За темою", "by_topic")]:
+        section(title)
+        header("", "Тендерів", "Очікувана вартість, грн")
+        for name, v in sorted(summary[key].items(), key=lambda kv: -kv[1]["expected"]):
+            row([name, v["count"], v["expected"]], [None, None, MONEY])
+
+    section("За місяцем оголошення")
+    header("Місяць", "Тендерів", "Очікувана вартість, грн", "Сума рішень, грн")
+    for month, v in summary["by_month"].items():
+        row([month, v["count"], v["expected"], v["awarded"]], [None, None, MONEY, MONEY])
+
+    for title, key, amount_label in [
+        ("Топ переможців за сумою", "top_winners_by_amount", "Сума рішень, грн"),
+        ("Топ переможців за кількістю перемог", "top_winners_by_count", "Сума рішень, грн"),
+        ("Топ замовників за сумою", "top_buyers_by_amount", "Очікувана вартість, грн"),
+        ("Топ замовників за кількістю тендерів", "top_buyers_by_count", "Очікувана вартість, грн"),
+    ]:
+        section(title)
+        header("Назва", "ЄДРПОУ", "Кількість", amount_label)
+        for r in summary[key]:
+            row([r["name"], r["edrpou"], r["count"], r["amount"]], [None, None, None, MONEY])
+    return ws.max_row
