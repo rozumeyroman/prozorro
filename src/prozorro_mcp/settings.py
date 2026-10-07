@@ -13,6 +13,10 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 DEFAULT_API_URL = "https://public-api.prozorro.gov.ua/api/2.5"
 DEFAULT_FILTER_CONFIG = PROJECT_ROOT / "config" / "tender-filter.yaml"
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "prozorro.db"
+# Excel exports and downloaded tender documents go here (visible to the user, unlike data/).
+DEFAULT_OUTPUT_DIR = Path.home() / "Prozorro"
+# Tender documents are downloaded only from these hosts (and their subdomains).
+DEFAULT_DOC_HOSTS = ("prozorro.gov.ua",)
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,8 @@ class Settings:
     max_retries: int = 6
     user_agent: str = "prozorro-mcp/0.1 (+https://github.com/rozumeyroman/prozorro)"
     extra_headers: dict[str, str] = field(default_factory=dict)
+    output_dir: Path = DEFAULT_OUTPUT_DIR
+    doc_hosts: tuple[str, ...] = DEFAULT_DOC_HOSTS
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -37,4 +43,8 @@ class Settings:
             concurrency=int(env.get("PROZORRO_CONCURRENCY", 4)),
             request_timeout=float(env.get("PROZORRO_TIMEOUT", 30)),
             max_retries=int(env.get("PROZORRO_MAX_RETRIES", 6)),
+            output_dir=Path(env.get("PROZORRO_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)).expanduser(),
+            doc_hosts=tuple(
+                h.strip() for h in env.get("PROZORRO_DOC_HOSTS", ",".join(DEFAULT_DOC_HOSTS)).split(",") if h.strip()
+            ),
         )

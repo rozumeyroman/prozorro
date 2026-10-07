@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime
 from functools import cache
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import Field
 
-from .client import NotFound, ProzorroClient
+from .client import NotFound, ProzorroClient, ProzorroError
 from .db import Database
+from .documents import DocumentDownloader, safe_name
+from .export import export_tenders
 from .filter import TenderFilter
+from .selection import TenderQuery, select_tenders
 from .settings import KYIV_TZ, Settings
 from .summary import documents_list, tender_summary, tender_url
 from .sync import Syncer, parse_since
@@ -25,6 +29,8 @@ INSTRUCTIONS = """\
 1. sync_tenders: підтягнути нові тендери з Prozorro (за замовчуванням створені сьогодні).
 2. search_tenders: шукати у локальній базі (текст, тема, вартість, дати, статус).
 3. get_tender: повна картка тендера: позиції, учасники та їхні ціни, переможці, договори, документи.
+4. export_excel: вивантаження в Excel (основний формат, яким користується користувач).
+5. download_documents: тендерна документація в теки «Замовник - Предмет - UA-ID».
 Посилання на тендер для людини: поле url (prozorro.gov.ua/tender/UA-...).
 """
 
@@ -218,6 +224,136 @@ async def explain_filter(
             for i in data.get("items") or []
         ],
     }
+
+
+StageParam = Annotated[
+    Literal["active", "complete", "all"],
+    Field(
+        description="active: тендери, що тривають (будь-який active.*); complete: завершені (договір підписано); all"
+    ),
+]
+DateParam = Annotated[str | None, Field(description="Формат since: 'today', 'yesterday', '7d', '2026-10-01'")]
+
+
+@mcp.tool()
+async def export_excel(
+    query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
+    topic: Annotated[Literal["network", "servers_storage", "cybersecurity", "keyword"] | None, Field()] = None,
+    stage: StageParam = "all",
+    status: Annotated[list[str] | None, Field(description="Точні статуси (замість stage)")] = None,
+    min_value: Annotated[float | None, Field(description="Мінімальна вартість релевантних лотів, грн")] = None,
+    created_from: DateParam = None,
+    created_to: DateParam = None,
+    awarded_from: Annotated[
+        str | None, Field(description="Лише тендери, де переможця визначено або договір підписано з цієї дати")
+    ] = None,
+    awarded_to: DateParam = None,
+    file_name: Annotated[
+        str | None, Field(description="Назва файлу без шляху; за замовчуванням з датою й часом")
+    ] = None,
+) -> dict[str, Any]:
+    """Вивантажити тендери з локальної бази в Excel (.xlsx).
+
+    Аркуші: «Тендери» (з посиланнями на prozorro.gov.ua), «Позиції», «Переможці» (рішення, суми, знижка, договір),
+    «Пропозиції» (усі учасники та їхні суми), «Ціни за одиницю». Файл створюється в теці експорту користувача;
+    поверніть користувачу шлях до файлу. Дані беруться з локальної бази: спершу виконайте sync_tenders.
+    """
+    q = TenderQuery(
+        query=query,
+        topic=topic,
+        stage=stage,
+        status=status,
+        min_value=min_value,
+        created_from=created_from,
+        created_to=created_to,
+        awarded_from=awarded_from,
+        awarded_to=awarded_to,
+    )
+    tenders = select_tenders(db(), q)
+    name = safe_name(file_name, 100) if file_name else f"prozorro_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}"
+    if not name.lower().endswith(".xlsx"):
+        name += ".xlsx"
+    path = settings().output_dir / "Експорт" / name
+    counts = export_tenders(tenders, path, tender_filter())
+    return {"path": str(path), "rows": counts}
+
+
+@mcp.tool()
+async def download_documents(
+    ctx: Context,
+    tender: Annotated[
+        str | None, Field(description="Один тендер: id, UA-… або посилання. Якщо не задано, діють фільтри нижче")
+    ] = None,
+    stage: StageParam = "all",
+    topic: Annotated[Literal["network", "servers_storage", "cybersecurity", "keyword"] | None, Field()] = None,
+    query: Annotated[str | None, Field(description="Повнотекстовий пошук по назві, замовнику та позиціях")] = None,
+    created_from: DateParam = None,
+    awarded_from: Annotated[str | None, Field(description="Переможця визначено/договір підписано з цієї дати")] = None,
+    include_bid_documents: Annotated[
+        bool, Field(description="Також документи пропозицій учасників (технічні та цінові пропозиції), якщо публічні")
+    ] = False,
+    include_signatures: Annotated[bool, Field(description="Також файли підписів .p7s")] = False,
+    max_tenders: Annotated[int, Field(ge=1, le=200)] = 20,
+) -> dict[str, Any]:
+    """Завантажити тендерну документацію в теки на диску користувача.
+
+    Тека кожного тендера: «<Замовник> - <Предмет закупівлі> - <UA-ID>» у теці «Документи». Перед завантаженням
+    тендер оновлюється з API Prozorro. Повторний запуск докачує лише нові або змінені документи.
+    Можна передати один тендер або вибрати тендери з локальної бази фільтрами (stage=active — ті, що тривають;
+    stage=complete — завершені).
+    """
+    if tender:
+        refs = [tender]
+    else:
+        q = TenderQuery(
+            query=query,
+            topic=topic,
+            stage=stage,
+            created_from=created_from,
+            awarded_from=awarded_from,
+            limit=max_tenders,
+        )
+        refs = [t["id"] for t in select_tenders(db(), q)]
+    root = settings().output_dir / "Документи"
+    results, errors = [], []
+    async with client() as c:
+        downloader = DocumentDownloader(c, root, settings().doc_hosts, settings().concurrency)
+        for i, ref in enumerate(refs, start=1):
+            try:
+                data = await _fresh_tender(c, ref)
+            except (ValueError, ProzorroError) as e:
+                errors.append({"tender": ref, "error": str(e)})
+                continue
+            await ctx.info(f"{i}/{len(refs)}: {data.get('tenderID')}")
+            r = await downloader.download_tender(data, include_signatures, include_bid_documents)
+            results.append(r.__dict__)
+    return {
+        "root": str(root),
+        "tenders": len(results),
+        "files_downloaded": sum(len(r["downloaded"]) for r in results),
+        "files_skipped": sum(r["skipped"] for r in results),
+        "files_failed": sum(len(r["failed"]) for r in results),
+        "megabytes": round(sum(r["bytes"] for r in results) / 1_048_576, 1),
+        "details": results,
+        "errors": errors,
+    }
+
+
+async def _fresh_tender(c: ProzorroClient, ref: str) -> dict[str, Any]:
+    """Latest tender data from the API (stored copies of finished tenders may predate the award)."""
+    hex_id, ua_id = resolve_ref(ref)
+    if not hex_id:
+        stored = db().get_tender(ua_id) if ua_id else None
+        if not stored:
+            raise ValueError(f"Тендер {ref!r} не знайдено в локальній базі; передайте внутрішній id (32 hex)")
+        hex_id = stored["id"]
+    try:
+        data = await c.get_tender(hex_id)
+    except NotFound as e:
+        raise ValueError(f"Тендер {hex_id} не знайдено в Prozorro") from e
+    if db().get_tender(hex_id):
+        db().save_tender(data, tender_filter().evaluate(data))
+    return data
 
 
 def run() -> None:

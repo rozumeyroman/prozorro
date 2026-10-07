@@ -9,6 +9,7 @@ import asyncio
 import logging
 import random
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -67,6 +68,37 @@ class ProzorroClient:
                 if resp.status_code not in RETRY_STATUSES or attempt == self.settings.max_retries:
                     raise ProzorroError(f"GET {url}: HTTP {resp.status_code} {resp.text[:300]}")
                 log.warning("GET %s -> %s, retry in %.1fs", url, resp.status_code, delay)
+            await asyncio.sleep(delay + random.uniform(0, delay / 2))
+            delay = min(delay * 2, 60)
+        raise AssertionError("unreachable")
+
+    async def download(self, url: str, dest: Path) -> int:
+        """Stream a document to `dest` (via a temporary file), following redirects. Returns the size in bytes."""
+        tmp = dest.with_name(dest.name + ".part")
+        delay = 1.0
+        for attempt in range(self.settings.max_retries + 1):
+            try:
+                self.requests_made += 1
+                async with self._http.stream("GET", url, follow_redirects=True) as resp:
+                    if resp.status_code == 200:
+                        size = 0
+                        with open(tmp, "wb") as f:
+                            async for chunk in resp.aiter_bytes():
+                                f.write(chunk)
+                                size += len(chunk)
+                        tmp.replace(dest)
+                        return size
+                    if resp.status_code == 404:
+                        raise NotFound(f"GET {url}: 404 Not Found")
+                    if resp.status_code not in RETRY_STATUSES or attempt == self.settings.max_retries:
+                        raise ProzorroError(f"GET {url}: HTTP {resp.status_code}")
+                    log.warning("GET %s -> %s, retry in %.1fs", url, resp.status_code, delay)
+            except httpx.TransportError as e:
+                if attempt == self.settings.max_retries:
+                    raise ProzorroError(f"GET {url}: {e!r}") from e
+                log.warning("GET %s failed (%r), retry in %.1fs", url, e, delay)
+            finally:
+                tmp.unlink(missing_ok=True)
             await asyncio.sleep(delay + random.uniform(0, delay / 2))
             delay = min(delay * 2, 60)
         raise AssertionError("unreachable")

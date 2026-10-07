@@ -194,9 +194,10 @@ class Database:
         created_to: str | None = None,
         statuses: list[str] | None = None,
         sort: str = "date_desc",
-        limit: int = 20,
+        limit: int | None = 20,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
+        """Search stored tenders. limit=None returns all matches."""
         where, args = [], []
         if query:
             where.append("t.id IN (SELECT id FROM tenders_fts WHERE tenders_fts MATCH ?)")
@@ -230,9 +231,18 @@ class Database:
                        t.entity_edrpou, t.entity_region, t.value_amount, t.relevant_value, t.currency, t.topics,
                        t.date_created, t.tender_period_end
                 FROM tenders t {sql_where} ORDER BY {order} LIMIT ? OFFSET ?""",
-            [*args, limit, offset],
+            [*args, -1 if limit is None else limit, offset],
         ).fetchall()
         return [dict(r) for r in rows], total
+
+    def tenders_data(self, ids: list[str]) -> list[dict[str, Any]]:
+        """Full tender JSON for the given ids, in the same order."""
+        out = []
+        for tid in ids:
+            row = self.conn.execute("SELECT data FROM tenders WHERE id = ?", (tid,)).fetchone()
+            if row:
+                out.append(json.loads(row["data"]))
+        return out
 
     def matched_items(self, tender_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(

@@ -13,7 +13,7 @@
 
 - Python-пакет `prozorro_mcp`, підключення до Claude Desktop та Claude Code (`README.md`, `.mcp.json`).
 - Синхронізація фіду з тришаровим фільтром і кешем рішень; база SQLite з повнотекстовим пошуком.
-- Інструменти: `status`, `sync_tenders`, `search_tenders`, `get_tender`, `list_documents`, `explain_filter`.
+- Інструменти: `status`, `sync_tenders`, `search_tenders`, `get_tender`, `list_documents`, `explain_filter`, `export_excel` (основний формат результатів), `download_documents` (документація в теки «Замовник - Предмет - UA-ID»).
 - Тести, зокрема наскрізний тест MCP через stdio на імітації API.
 
 Ще не зроблено: витяг тексту з документів (`read_document`), Catalog API, постійна синхронізація (позиція у фіді), калібрування фільтра на живих даних.

@@ -22,6 +22,44 @@ from prozorro_mcp.settings import KYIV_TZ
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "tender_complete.json").read_text(encoding="utf-8"))
 API_PREFIX = "/api/2.5"
+# Document URLs point here; FakeProzorro rewrites the placeholder to its own address when serving.
+DOC_HOST = "http://docs.placeholder"
+
+
+def _doc(title: str, doc_type: str | None, fmt: str, published: datetime, **extra: Any) -> dict[str, Any]:
+    doc_id = extra.pop("id", None) or uuid4().hex
+    d = {
+        "id": doc_id,
+        "title": title,
+        "format": fmt,
+        "url": f"{DOC_HOST}/get/{uuid4().hex}",
+        "datePublished": published.isoformat(),
+        "dateModified": published.isoformat(),
+        "documentOf": "tender",
+        **extra,
+    }
+    if doc_type:
+        d["documentType"] = doc_type
+    return d
+
+
+def tender_documents(created: datetime) -> list[dict[str, Any]]:
+    spec_id = uuid4().hex
+    return [
+        _doc("Технічні вимоги.pdf", "technicalSpecifications", "application/pdf", created, id=spec_id),
+        _doc("Тендерна документація.docx", "biddingDocuments", "application/msword", created),
+        _doc("Додаток 1/2: ціни?.xlsx", None, "application/vnd.ms-excel", created),
+        _doc("../../evil.txt", None, "text/plain", created),
+        _doc("sign.p7s", "notice", "application/pkcs7-signature", created),
+        # newer version of the technical specification (same id)
+        _doc(
+            "Технічні вимоги.pdf",
+            "technicalSpecifications",
+            "application/pdf",
+            created + timedelta(hours=1),
+            id=spec_id,
+        ),
+    ]
 
 
 def _value(amount: float) -> dict[str, Any]:
@@ -76,6 +114,7 @@ def make_tender(
         t.pop("lots", None)
     for key in ("bids", "awards", "contracts", "qualifications", "auctionPeriod", "awardPeriod"):
         t.pop(key, None)
+    t["documents"] = tender_documents(created)
     if with_results:
         supplier = {
             "name": 'ТОВ "Мережеві Рішення"',
@@ -104,6 +143,16 @@ def make_tender(
                 "tenderers": [supplier],
                 "value": _value(value * 0.82),
                 "items": unit_items,
+                "documents": [
+                    _doc("Технічна пропозиція.pdf", "technicalSpecifications", "application/pdf", created),
+                    _doc(
+                        "Комерційна таємниця.pdf",
+                        "commercialProposal",
+                        "application/pdf",
+                        created,
+                        confidentiality="buyerOnly",
+                    ),
+                ],
             },
             {"id": bid2, "status": "active", "tenderers": [other], "value": _value(value * 0.9)},
         ]
@@ -220,6 +269,7 @@ class FakeProzorro:
         self.tenders = {t["id"]: t for t in tenders}
         self.page_size = page_size
         self.requests: list[str] = []
+        self.base = "http://fake"
 
     def feed(self, params: dict[str, str]) -> dict[str, Any]:
         ordered = sorted(self.tenders.values(), key=lambda t: t["dateModified"], reverse=bool(params.get("descending")))
@@ -231,24 +281,38 @@ class FakeProzorro:
         out: dict[str, Any] = {"data": data, "next_page": {"offset": str(start + len(page))}}
         return out
 
-    def handle(self, path: str, query: str) -> tuple[int, dict[str, Any]]:
+    def tender_json(self, t: dict[str, Any]) -> dict[str, Any]:
+        return json.loads(json.dumps(t, ensure_ascii=False).replace(DOC_HOST, self.base))
+
+    def handle(self, path: str, query: str) -> tuple[int, bytes, dict[str, str]]:
+        """Returns (status, body, headers)."""
         self.requests.append(path)
         params = {k: v[0] for k, v in parse_qs(query).items()}
+        if path.startswith("/get/"):  # document service: redirect like the real one
+            return 302, b"", {"Location": f"{self.base}/files/{path[5:]}"}
+        if path.startswith("/files/"):
+            return 200, b"%PDF-fake " + path.encode(), {"Content-Type": "application/octet-stream"}
         if path.startswith(API_PREFIX):
             path = path[len(API_PREFIX) :]
+        body: dict[str, Any] | None = None
         if path == "/tenders":
-            return 200, self.feed(params)
-        if path.startswith("/tenders/"):
+            body = self.feed(params)
+        elif path.startswith("/tenders/"):
             t = self.tenders.get(path.split("/")[2])
             if t:
-                return 200, {"data": t}
-        return 404, {"status": "error", "errors": [{"location": "url", "name": "id", "description": "Not Found"}]}
+                body = {"data": self.tender_json(t)}
+        if body is None:
+            err = {"status": "error", "errors": [{"location": "url", "name": "id", "description": "Not Found"}]}
+            return 404, json.dumps(err).encode(), {"Content-Type": "application/json"}
+        return 200, json.dumps(body, ensure_ascii=False).encode(), {"Content-Type": "application/json"}
 
     # httpx transport for unit tests
-    def transport(self) -> httpx.MockTransport:
+    def transport(self, base: str = "http://fake") -> httpx.MockTransport:
+        self.base = base
+
         def handler(request: httpx.Request) -> httpx.Response:
-            status, body = self.handle(request.url.path, request.url.query.decode())
-            return httpx.Response(status, json=body)
+            status, body, headers = self.handle(request.url.path, request.url.query.decode())
+            return httpx.Response(status, content=body, headers=headers)
 
         return httpx.MockTransport(handler)
 
@@ -259,17 +323,18 @@ class FakeProzorro:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 u = urlparse(self.path)
-                status, body = fake.handle(u.path, u.query)
-                raw = json.dumps(body, ensure_ascii=False).encode()
+                status, body, headers = fake.handle(u.path, u.query)
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(raw)
+                self.wfile.write(body)
 
             def log_message(self, *args: Any) -> None:
                 pass
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{server.server_address[1]}"
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        return server, f"http://127.0.0.1:{server.server_address[1]}{API_PREFIX}"
+        return server, f"{self.base}{API_PREFIX}"
