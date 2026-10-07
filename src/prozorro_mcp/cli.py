@@ -61,7 +61,7 @@ def _export(args: argparse.Namespace, s: Settings) -> None:
     )
     tenders = select_tenders(db, q)
     path = (
-        Path(args.output)
+        Path(args.output).expanduser()
         if args.output
         else s.output_dir / "Експорт" / f"prozorro_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
     )
