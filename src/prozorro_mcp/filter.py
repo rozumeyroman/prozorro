@@ -43,6 +43,11 @@ class ItemTrace:
     keyword: str | None = None
 
 
+def _snippet(text: str, m: re.Match[str], around: int = 50) -> str:
+    """The words around a keyword match, to show where in a long tender title or description it was found."""
+    return " ".join(text[max(0, m.start() - around) : m.end() + around].split())
+
+
 RULE_UA = {
     "strong": "основний код",
     "weak_keyword": "загальний код + ключове слово",
@@ -179,7 +184,10 @@ class TenderFilter:
                 m = rx.search(text)
                 if m:
                     match = ItemMatch(topic=group, reason=f"CPV {code} + «{m.group(0)}»", **base)
-                    return ItemTrace(match, "weak_keyword", f"загальний код + «{m.group(0)}» ({where})", m.group(0))
+                    detail = f"загальний код + «{m.group(0)}» ({where})"
+                    if where != "опис":
+                        detail += f": …{_snippet(text, m)}…"
+                    return ItemTrace(match, "weak_keyword", detail, m.group(0))
         return ItemTrace(None, "weak_no_keyword", "загальний код без ключового слова")
 
     def item_contexts(self, tender: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:

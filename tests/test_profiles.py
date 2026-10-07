@@ -175,6 +175,12 @@ CYBER_POSITIVE = [
     ("48000000-8", "Платформа Breach and Attack Simulation"),
     ("32420000-3", "Система IPS/IDS з підпискою на сигнатури"),
     ("32420000-3", "Шлюз безпеки з функціями IPS, 10 Гбіт/с"),
+    ("72000000-5", "Послуги цілодобового моніторингу безпеки та реагування на інциденти"),
+    ("72000000-5", "Підписка на сервіс threat intelligence"),
+    ("72000000-5", "Послуги із захисту вебресурсів"),
+    ("48000000-8", "Платформа security awareness з фішинг-симуляціями"),
+    ("48000000-8", "Програмна продукція для пристрою Cisco FPR4110"),
+    ("72000000-5", "Послуги з постачання засобів криптографічного захисту інформації"),
 ]
 CYBER_NEGATIVE = [
     ("72000000-5", "Технічне обслуговування системи BAS (автоматизація будівлі)"),
@@ -187,6 +193,8 @@ CYBER_NEGATIVE = [
     ("30230000-0", 'Універсальний ПК (23.8", IPS, 16GB, 512GB)'),
     ("30230000-0", 'Дисплей: LG/ASUS 31.5";IPS;3840x2160;16:9'),
     ("30230000-0", "Монітор 27 IPS-матриця 2560x1440"),
+    ("30230000-0", "Зовнішній SSD накопичувач з апаратним шифруванням 8 ТБ"),
+    ("48510000-6", "Ліцензія на активацію алгоритму шифрування AES 256 (для радіостанцій Motorola)"),
 ]
 
 
@@ -200,3 +208,15 @@ def test_cyber_positive_phrases(cyber_filter, cpv, description):
 def test_cyber_negative_phrases(cyber_filter, cpv, description):
     t = make_tender("Закупівля", [(cpv, description), ("39100000-3", "Стіл")], 900_000, created=NOW)
     assert not cyber_filter.evaluate(t).relevant, description
+
+
+def test_context_match_shows_snippet(cyber_filter):
+    t = make_tender(
+        "Ліцензії Red Hat з урахуванням вимог щодо захисту інформації в ІКС",
+        [("48000000-8", "Red Hat OpenShift")],
+        900_000,
+        created=NOW,
+    )
+    item, context = cyber_filter.item_contexts(t)[0]
+    tr = cyber_filter.trace_item(item, context)
+    assert tr.rule == "weak_keyword" and "вимог щодо захисту інформації" in tr.detail
