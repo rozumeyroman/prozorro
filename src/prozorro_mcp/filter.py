@@ -80,6 +80,9 @@ class TenderFilter:
         groups = include.items() if isinstance(include, dict) else [("keyword", include)]
         self.include = [(group, re.compile(p, re.I)) for group, patterns in groups for p in patterns]
         self.exclude = [re.compile(p, re.I) for p in kw.get("exclude", [])]
+        # Checked against the start of an item description for every code (strong ones too): catches
+        # cables/memory/parts that buyers file under a parent code such as 32420000-3 or 30230000-0.
+        self.exclude_items = [re.compile(r"^\W*(?:" + p + ")", re.I) for p in kw.get("exclude_items", [])]
         # "always": tender title/description count as context for every item;
         # "single_item": only when the tender has one item (avoids e.g. an office suite riding on "антивірус").
         self.title_context = kw.get("title_context", "always")
@@ -126,6 +129,8 @@ class TenderFilter:
         if any(digits.startswith(p) for p in self.cpv_exclude):
             return None
         desc = item.get("description") or ""
+        if any(rx.search(desc) for rx in self.exclude_items):
+            return None
         base = dict(
             item_id=item.get("id", ""),
             description=desc,
@@ -197,6 +202,7 @@ class TenderFilter:
             "cpv_strong_groups": {g: len(c) for g, c in self.config["cpv_strong"].items()},
             "cpv_weak": len(self.weak),
             "cpv_exclude": len(self.cpv_exclude),
+            "exclude_items": len(self.exclude_items),
             "keyword_groups": sorted({g for g, _ in self.include}),
             "keywords": len(self.include),
         }

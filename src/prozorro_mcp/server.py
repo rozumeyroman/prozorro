@@ -465,6 +465,14 @@ async def save_filter(
         list[str] | None, Field(description="Слова-виключення: позиція з загальним кодом з таким словом не підходить")
     ] = None,
     remove_exclude_keywords: list[str] | None = None,
+    add_exclude_items: Annotated[
+        list[str] | None,
+        Field(
+            description="Початок опису позиції, з яким вона не підходить за жодного коду "
+            "(напр. 'кабел', 'модул\\w* пам'): для кабелів і комплектуючих під загальними кодами"
+        ),
+    ] = None,
+    remove_exclude_items: list[str] | None = None,
     add_procurement_method_types: list[str] | None = None,
     remove_procurement_method_types: list[str] | None = None,
     activate: Annotated[bool, Field(description="Одразу зробити активним")] = True,

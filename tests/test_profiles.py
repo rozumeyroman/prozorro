@@ -98,10 +98,50 @@ def test_save_filter(tmp_path, tenders):
 
 def test_exclude_cpv(tmp_path):
     reg = registry(tmp_path)
-    f, _ = reg.save("infra-no-cables", "it-infrastructure", {"exclude_cpv": ["32421000-0"]})
-    t = make_tender("Мережа", [("32421000-0", "Кабель UTP cat.6")], 900_000, created=NOW)
+    f, _ = reg.save("infra-no-routers", "it-infrastructure", {"exclude_cpv": ["32413100-2"]})
+    t = make_tender("Мережа", [("32413100-2", "Маршрутизатор Juniper MX204")], 900_000, created=NOW)
     assert not f.evaluate(t).relevant
     assert reg.load("it-infrastructure").evaluate(t).relevant
+
+
+@pytest.mark.parametrize(
+    ("cpv", "description"),
+    [
+        ("32421000-0", "Комутатор"),  # cables code is excluded whatever the description says
+        ("32581200-1", "Факс Panasonic"),
+        ("30236110-6", "Сервер"),  # RAM code
+        ("30237135-4", "Мережевий адаптер Intel X710"),
+        ("32420000-3", "Кабель UTP cat.6, 305 м"),  # cable filed under the parent network code
+        ("32420000-3", "Патч-корд RJ45 1 м"),
+        ("30230000-0", "Модуль пам'яті DDR5 64GB для сервера Dell"),
+        ("30230000-0", "Жорсткий диск 2.4TB SAS для СХД"),
+        ("48820000-2", "Блок живлення для сервера HPE"),
+        ("30230000-0", "Шафа серверна 42U"),
+    ],
+)
+def test_default_exclusions(tender_filter, cpv, description):
+    t = make_tender("Серверне та мережеве обладнання", [(cpv, description)], 900_000, created=NOW)
+    assert not tender_filter.evaluate(t).relevant
+
+
+@pytest.mark.parametrize(
+    ("cpv", "description"),
+    [
+        ("32420000-3", "Комутатор Cisco C1300-48T з кабелем живлення"),
+        ("30230000-0", "Сервер Dell PowerEdge R760 (2x CPU, 512GB RAM)"),
+        ("48820000-2", "Сервер HPE ProLiant DL380 Gen11"),
+    ],
+)
+def test_main_products_still_pass(tender_filter, cpv, description):
+    t = make_tender("Обладнання", [(cpv, description)], 900_000, created=NOW)
+    assert tender_filter.evaluate(t).relevant
+
+
+def test_cyber_excludes_parts(cyber_filter):
+    t = make_tender("Fortinet", [("32420000-3", "Блок живлення для FortiGate 200F")], 900_000, created=NOW)
+    assert not cyber_filter.evaluate(t).relevant
+    t = make_tender("Fortinet", [("32420000-3", "Міжмережевий екран FortiGate 200F")], 900_000, created=NOW)
+    assert cyber_filter.evaluate(t).relevant
 
 
 async def test_profiles_have_separate_decisions_and_matches(fake, tender_filter, cyber_filter):

@@ -183,6 +183,12 @@ def apply_changes(config: dict[str, Any], ch: dict[str, Any]) -> None:
         _add(kw.setdefault("exclude", []), ch["add_exclude_keywords"])
     if ch.get("remove_exclude_keywords"):
         _remove(kw.get("exclude", []), ch["remove_exclude_keywords"])
+    for p in ch.get("add_exclude_items") or []:
+        re.compile(p, re.I)
+    if ch.get("add_exclude_items"):
+        _add(kw.setdefault("exclude_items", []), ch["add_exclude_items"])
+    if ch.get("remove_exclude_items"):
+        _remove(kw.get("exclude_items", []), ch["remove_exclude_items"])
 
     pmt = config.setdefault("feed_prefilter", {}).setdefault("procurement_method_types", {})
     if ch.get("add_procurement_method_types"):
