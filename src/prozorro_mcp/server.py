@@ -552,6 +552,47 @@ async def _fresh_tender(c: ProzorroClient, ref: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def calibrate_filter(
+    ctx: Context,
+    created_from: DateParam = None,
+    created_to: DateParam = None,
+    sample: Annotated[
+        int,
+        Field(ge=0, le=2000, description="Скільки відкинутих тендерів перевірити повторно (0 — без звернень до API)"),
+    ] = 300,
+    filter: FilterParam = None,
+) -> dict[str, Any]:
+    """Звіт для калібрування фільтра в Excel: позиції тендерів, що пройшли (з правилом, яке спрацювало), і
+    відкинуті тендери зі словами, схожими на тему (можливі пропуски). Користувач позначає вердикти в колонках
+    «Вердикт» / «Мав пройти?», а за позначками уточнюються коди, ключові слова й виключення (save_filter).
+    Поверніть користувачу шлях до файлу. Для великих вибірок надійніше `prozorro-mcp calibrate` з терміналу."""
+    from .calibrate import build_report, write_report
+
+    f = profile_filter(filter)
+
+    def report_progress(msg: str) -> None:
+        asyncio.ensure_future(ctx.info(msg))
+
+    async with client() as c:
+        report = await build_report(
+            db(), c if sample else None, f, created_from, created_to, sample, settings().concurrency, report_progress
+        )
+    path = settings().output_dir / "Експорт" / f"calibration_{f.name}_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
+    rows = write_report(report, path)
+    return {
+        "path": str(path),
+        "filter": f.name,
+        "passed_tenders": report["passed_tenders"],
+        "rules": dict(report["rules"]),
+        "top_keywords": dict(report["keywords"].most_common(15)),
+        "rejected_total": report["rejected_total"],
+        "rejected_checked": report["rejected_checked"],
+        "candidates": len(report["candidates"]),
+        "rows": rows,
+    }
+
+
+@mcp.tool()
 async def list_filters() -> list[dict[str, Any]]:
     """Профілі фільтрів: назва, опис, чи активний, поріг вартості, групи CPV і тем ключових слів.
 

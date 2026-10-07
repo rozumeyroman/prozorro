@@ -140,6 +140,7 @@ keywords:
       - 'антивірус|антивирус|anti-?virus'
       - '\b(EDR|XDR|EPP|MDR)\b'
       - 'захист\w* (робочих станцій|кінцевих точок)|endpoint'
+      - 'шкідлив\w* (програм|ПЗ|код)|malware|ransomware|програм\w*-вимагач'
     network_security:
       - 'firewall|файрвол|фаєрвол|брандмауер|брандмаузер|міжмережев\w* екран'
       - '\b(NGFW|UTM|IPS|IDS|WAF|SWG|ZTNA|SASE|NAC)\b'
@@ -147,16 +148,21 @@ keywords:
       - '\bVPN\b'
       - 'пісочниц|sandbox'
       - 'шлюз\w* безпеки'
+      - 'виявленн\w* (та запобіганн\w* )?вторгнен|запобіганн\w* вторгнен'
+      - 'DDoS|захист\w* від (атак|мережевих атак)'
     siem_soc:
       - '\b(SIEM|SOAR|SOC|NDR|UEBA)\b'
       - 'моніторинг\w* (подій|інцидентів) (інформаційної )?безпеки'
       - 'центр\w* (кібер|протидії кібер)'
+      - '(керуванн|управлінн)\w* (подіями|інцидентами) (інформаційної |кібер)?безпеки|кореляці\w* подій'
     identity:
       - '\b(PAM|IAM|IdM|IGA|SSO|MFA|2FA)\b'
       - 'двофакторн|багатофакторн|привілейован\w* (доступ|облікових)'
       - 'керуванн\w* (доступом|ідентифікац|обліковими записами)'
     appsec_testing:
-      - '\b(DAST|SAST|SCA|BAS)\b'
+      - '\b(DAST|SAST|SCA)\b'
+      # не голе «BAS»: у закупівлях це частіше Building Automation System
+      - 'breach (and|&) attack|симуляці\w* (атак|зламу)'
       - 'сканер\w* (вразливостей|безпеки)|vulnerability|вразливост'
       - 'тестуванн\w* на проникнення|пентест|penetration'
     data_email:
@@ -164,11 +170,12 @@ keywords:
       - 'захист\w* (пошти|електронної пошти)|email security|антиспам|anti-?spam'
       - 'шифруванн|криптограф'
     deception:
-      - 'deception|honeypot|ханіпот|приман'
+      - 'deception|honeypot|ханіпот'
     general:
       - 'кібер'
       - 'інформаційн\w* безпек|захист\w* інформаці'
       - '\bКСЗІ\b|комплексн\w* систем\w* захисту'
+      - '\bsecurity\b'
     vendors:
       - '\b(Fortinet|FortiGate|FortiAnalyzer|FortiMail|FortiWeb|FortiClient|FortiSIEM|FortiEDR)\b'
       - '\b(Palo Alto|Cortex XDR|Prisma|Check ?Point|Sophos|ESET|Bitdefender|CrowdStrike|SentinelOne|Trellix)\b'

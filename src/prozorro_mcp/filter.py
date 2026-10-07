@@ -36,6 +36,26 @@ class ItemMatch:
 
 
 @dataclass
+class ItemTrace:
+    match: ItemMatch | None
+    rule: str  # strong | weak_keyword | weak_no_keyword | not_in_lists | excluded_* | no_code
+    detail: str
+    keyword: str | None = None
+
+
+RULE_UA = {
+    "strong": "основний код",
+    "weak_keyword": "загальний код + ключове слово",
+    "weak_no_keyword": "загальний код без ключового слова",
+    "not_in_lists": "код поза списками",
+    "excluded_cpv": "виключений код",
+    "excluded_item": "виключено за початком опису",
+    "excluded_keyword": "слово-виключення",
+    "no_code": "без коду",
+}
+
+
+@dataclass
 class Decision:
     relevant: bool
     reason: str
@@ -121,16 +141,23 @@ class TenderFilter:
     # Layers 2-3: full tender ------------------------------------------------------------------------
 
     def match_item(self, item: dict[str, Any], context_text: str) -> ItemMatch | None:
+        return self.trace_item(item, context_text).match
+
+    def trace_item(self, item: dict[str, Any], context_text: str) -> ItemTrace:
+        """Classify one item and say which rule decided it (used by matching, explain_filter and calibration)."""
         cls = item.get("classification") or {}
         code = cls.get("id") or ""
         if not code:
-            return None
+            return ItemTrace(None, "no_code", "позиція без коду CPV")
         digits = cpv_digits(code)
-        if any(digits.startswith(p) for p in self.cpv_exclude):
-            return None
+        excluded = next((p for p in self.cpv_exclude if digits.startswith(p)), None)
+        if excluded:
+            return ItemTrace(None, "excluded_cpv", f"код у cpv_exclude (гілка {excluded})")
         desc = item.get("description") or ""
-        if any(rx.search(desc) for rx in self.exclude_items):
-            return None
+        for rx in self.exclude_items:
+            m = rx.search(desc)
+            if m:
+                return ItemTrace(None, "excluded_item", f"опис починається з «{m.group(0).strip()}»")
         base = dict(
             item_id=item.get("id", ""),
             description=desc,
@@ -139,16 +166,34 @@ class TenderFilter:
         )
         for prefix, group in self.strong:
             if digits.startswith(prefix):
-                return ItemMatch(topic=group, reason=f"CPV {code} ({group})", **base)
-        if any(digits.startswith(p) for p in self.weak):
-            if any(rx.search(desc) for rx in self.exclude):
-                return None
-            for text in (desc, context_text):
-                for group, rx in self.include:
-                    m = rx.search(text)
-                    if m:
-                        return ItemMatch(topic=group, reason=f"CPV {code} + «{m.group(0)}»", **base)
-        return None
+                match = ItemMatch(topic=group, reason=f"CPV {code} ({group})", **base)
+                return ItemTrace(match, "strong", f"основний код ({group})")
+        if not any(digits.startswith(p) for p in self.weak):
+            return ItemTrace(None, "not_in_lists", "код не входить до основних чи загальних")
+        for rx in self.exclude:
+            m = rx.search(desc)
+            if m:
+                return ItemTrace(None, "excluded_keyword", f"слово-виключення «{m.group(0)}»")
+        for where, text in (("опис", desc), ("назва тендера/лоту", context_text)):
+            for group, rx in self.include:
+                m = rx.search(text)
+                if m:
+                    match = ItemMatch(topic=group, reason=f"CPV {code} + «{m.group(0)}»", **base)
+                    return ItemTrace(match, "weak_keyword", f"загальний код + «{m.group(0)}» ({where})", m.group(0))
+        return ItemTrace(None, "weak_no_keyword", "загальний код без ключового слова")
+
+    def item_contexts(self, tender: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
+        """Each item with the text its keywords may also be found in: the lot title and (see title_context)
+        the tender title and description."""
+        lots = {lot["id"]: lot for lot in tender.get("lots") or [] if lot.get("id")}
+        tender_text = " ".join(filter(None, [tender.get("title"), tender.get("description")]))
+        if self.title_context == "single_item" and len(tender.get("items") or []) > 1:
+            tender_text = ""
+        out = []
+        for item in tender.get("items") or []:
+            lot = lots.get(item.get("relatedLot") or "")
+            out.append((item, " ".join(filter(None, [tender_text, (lot or {}).get("title")]))))
+        return out
 
     def evaluate(self, tender: dict[str, Any]) -> Decision:
         if tender.get("status") in self.skip_statuses:
@@ -157,14 +202,8 @@ class TenderFilter:
         if pre:
             return pre
 
-        lots = {lot["id"]: lot for lot in tender.get("lots") or [] if lot.get("id")}
-        tender_text = " ".join(filter(None, [tender.get("title"), tender.get("description")]))
-        if self.title_context == "single_item" and len(tender.get("items") or []) > 1:
-            tender_text = ""
         matches: list[ItemMatch] = []
-        for item in tender.get("items") or []:
-            lot = lots.get(item.get("relatedLot") or "")
-            context = " ".join(filter(None, [tender_text, (lot or {}).get("title")]))
+        for item, context in self.item_contexts(tender):
             m = self.match_item(item, context)
             if m:
                 matches.append(m)

@@ -154,3 +154,43 @@ async def test_profiles_have_separate_decisions_and_matches(fake, tender_filter,
     # decisions are per profile: a cyber sync evaluates tenders the broad profile already decided
     stats = await run_sync(fake, cyber_filter, db)
     assert stats["fetched_new"] == 6 and stats["relevant_found"] == 1
+
+
+CYBER_POSITIVE = [
+    ("48000000-8", "Ліцензія FortiGate-100F Unified Threat Protection на 1 рік"),
+    ("48000000-8", "Програмне забезпечення для захисту кінцевих точок, 250 ліцензій"),
+    ("72000000-5", "Послуги з технічної підтримки системи SIEM"),
+    ("72000000-5", "Продовження підписки на систему захисту електронної пошти"),
+    ("48000000-8", "Сканер вразливостей Nessus Professional"),
+    ("72000000-5", "Послуги з проведення тестування на проникнення"),
+    ("48000000-8", "Система управління привілейованим доступом"),
+    ("32420000-3", "Апаратний міжмережевий екран"),
+    ("72000000-5", "Послуги з побудови КСЗІ"),
+    ("48000000-8", "Система виявлення та запобігання вторгненням"),
+    ("72000000-5", "Послуги захисту від DDoS-атак"),
+    ("48000000-8", "Засіб захисту від шкідливого програмного забезпечення"),
+    ("48000000-8", "Система керування подіями інформаційної безпеки"),
+    ("48000000-8", "Kaspersky Endpoint Security for Business"),
+    ("48000000-8", "Microsoft 365 E5 Security"),
+    ("48000000-8", "Платформа Breach and Attack Simulation"),
+]
+CYBER_NEGATIVE = [
+    ("72000000-5", "Технічне обслуговування системи BAS (автоматизація будівлі)"),
+    ("48000000-8", "Microsoft Windows Server 2022 Standard"),
+    ("48000000-8", "Microsoft Office 2024"),
+    ("79417000-0", "Консультації з питань охорони об'єкта"),
+    ("30230000-0", "Ноутбук Dell Latitude з антивірусом"),
+    ("72000000-5", "Послуги з розробки веб-сайту"),
+]
+
+
+@pytest.mark.parametrize(("cpv", "description"), CYBER_POSITIVE)
+def test_cyber_positive_phrases(cyber_filter, cpv, description):
+    t = make_tender("Закупівля", [(cpv, description), ("39100000-3", "Стіл")], 900_000, created=NOW)
+    assert cyber_filter.evaluate(t).relevant, description
+
+
+@pytest.mark.parametrize(("cpv", "description"), CYBER_NEGATIVE)
+def test_cyber_negative_phrases(cyber_filter, cpv, description):
+    t = make_tender("Закупівля", [(cpv, description), ("39100000-3", "Стіл")], 900_000, created=NOW)
+    assert not cyber_filter.evaluate(t).relevant, description

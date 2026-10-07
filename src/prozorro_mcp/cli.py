@@ -1,4 +1,4 @@
-"""Command line: `prozorro-mcp` (MCP server over stdio) and sync/search/summary/export/docs/filters commands."""
+"""Command line: `prozorro-mcp` (MCP server over stdio) and sync/search/summary/export/docs/calibrate/filters."""
 
 from __future__ import annotations
 
@@ -162,6 +162,40 @@ async def _docs(args: argparse.Namespace, s: Settings) -> None:
     _dump({"tenders": out, "errors": errors})
 
 
+async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
+    from .calibrate import build_report, write_report
+
+    db = Database(s.db_path)
+    f = _filter(s, db, args.filter)
+    async with ProzorroClient(s) as client:
+        report = await build_report(
+            db,
+            client if args.sample else None,
+            f,
+            created_from=args.created_from,
+            created_to=args.created_to,
+            sample=args.sample,
+            concurrency=s.concurrency,
+            progress=_log,
+        )
+    path = (
+        Path(args.output).expanduser()
+        if args.output
+        else s.output_dir / "Експорт" / f"calibration_{f.name}_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
+    )
+    rows = write_report(report, path)
+    _dump(
+        {
+            "path": str(path),
+            "filter": f.name,
+            "passed_tenders": report["passed_tenders"],
+            "rejected_total": report["rejected_total"],
+            "rejected_checked": report["rejected_checked"],
+            "rows": rows,
+        }
+    )
+
+
 def _filters(args: argparse.Namespace, s: Settings) -> None:
     db = Database(s.db_path)
     reg = _registry(s)
@@ -240,10 +274,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_docs.add_argument("--yes", action="store_true", help="підтвердити видалення для --prune")
 
+    p_cal = sub.add_parser("calibrate", help="звіт для калібрування фільтра (Excel для позначок)")
+    p_cal.add_argument("--created-from", help=f"тендери, оголошені з ({DATE_HELP})")
+    p_cal.add_argument("--created-to", help="оголошені до (не включно)")
+    p_cal.add_argument(
+        "--sample", type=int, default=300, help="скільки відкинутих тендерів перевірити повторно (0 — без мережі)"
+    )
+    p_cal.add_argument("-o", "--output", help="шлях до .xlsx")
+
     p_filters = sub.add_parser("filters", help="профілі фільтрів; з назвою — зробити активним")
     p_filters.add_argument("use", nargs="?", help="назва профілю, який зробити активним")
 
-    for p in (p_sync, p_search, p_summary, p_export, p_docs):
+    for p in (p_sync, p_search, p_summary, p_export, p_docs, p_cal):
         p.add_argument("--filter", help="профіль фільтра лише для цієї команди (за замовчуванням активний)")
     return parser
 
@@ -263,6 +305,8 @@ def main(argv: list[str] | None = None) -> None:
             _export(args, s)
         elif args.cmd == "docs":
             asyncio.run(_docs(args, s))
+        elif args.cmd == "calibrate":
+            asyncio.run(_calibrate(args, s))
         elif args.cmd == "filters":
             _filters(args, s)
         else:

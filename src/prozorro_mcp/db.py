@@ -155,6 +155,16 @@ class Database:
             ),
         )
 
+    def rejected_decisions(self, profile: str, stages: tuple[str, ...] = ("topic", "value")) -> list[dict[str, Any]]:
+        """Latest negative decision per tender for any version of `profile` (filter keys "<profile>:<hash>")."""
+        marks = ",".join("?" * len(stages))
+        rows = self.conn.execute(
+            f"""SELECT id, tender_id, stage, reason, max(checked_at) AS checked_at FROM filter_decisions
+                WHERE filter_key LIKE ? AND relevant = 0 AND stage IN ({marks}) GROUP BY id""",
+            (f"{profile}:%", *stages),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # filter matches ------------------------------------------------------------------------------
 
     def save_match(self, tender_id: str, profile: str, filter_key: str, decision: Decision) -> None:
