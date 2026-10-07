@@ -52,3 +52,35 @@ def test_cli_end_to_end(tmp_path, monkeypatch, capsys):
         assert done["count"] == 1
     finally:
         server.shutdown()
+
+
+def test_cli_offers(tmp_path, monkeypatch, capsys):
+    fake = FakeProzorro(demo_tenders())
+    server, api_url = fake.serve()
+    try:
+        monkeypatch.setenv("PROZORRO_API_URL", api_url)
+        monkeypatch.setenv("PROZORRO_DB", str(tmp_path / "db.sqlite"))
+        monkeypatch.setenv("PROZORRO_OUTPUT_DIR", str(tmp_path / "out"))
+        monkeypatch.setenv("PROZORRO_FILTER", "it-infrastructure")
+        run(capsys, "sync", "--since", "today")
+
+        # without tender ids: completed tenders of the selection
+        prepared = run(capsys, "offers", "prepare")
+        (t,) = prepared["tenders"]
+        assert t["winners"] == ['ТОВ "Мережеві Рішення"'] and t["documents"] == 1
+        assert (tmp_path / "out" / "Документи" / t["folder"].rsplit("/", 1)[-1] / "_winner.json").exists()
+
+        rows = tmp_path / "rows.json"
+        rows.write_text(
+            json.dumps(
+                [{"tender": t["tenderID"], "rows": [{"vendor": "Cisco", "part_number": "C9300-48P-E", "quantity": 10}]}]
+            ),
+            encoding="utf-8",
+        )
+        assert run(capsys, "offers", "save", str(rows))[0]["saved_rows"] == 1
+        listed = run(capsys, "offers", "list", "--vendor", "cisco")
+        assert listed[0]["supplier"] == 'ТОВ "Мережеві Рішення"'
+        out = run(capsys, "offers", "list", "-o", str(tmp_path / "o.xlsx"))
+        assert out["rows"] == 1
+    finally:
+        server.shutdown()

@@ -273,6 +273,7 @@ class FakeProzorro:
         # failure injection for tests
         self.fail_feed_after: int | None = None  # feed requests after this many fail with HTTP 500
         self.fail_files: set[str] = set()  # document keys whose download fails with HTTP 500
+        self.contents: dict[str, bytes] = {}  # document key -> file body (default: a fake PDF stub)
         self.feed_calls = 0
 
     def feed(self, params: dict[str, str]) -> dict[str, Any]:
@@ -297,7 +298,8 @@ class FakeProzorro:
         if path.startswith("/files/") and path[7:] in self.fail_files:
             return 500, b"error", {"Content-Type": "text/plain"}
         if path.startswith("/files/"):
-            return 200, b"%PDF-fake " + path.encode(), {"Content-Type": "application/octet-stream"}
+            body = self.contents.get(path[7:], b"%PDF-fake " + path.encode())
+            return 200, body, {"Content-Type": "application/octet-stream"}
         if path.startswith(API_PREFIX):
             path = path[len(API_PREFIX) :]
         body: dict[str, Any] | None = None

@@ -21,6 +21,7 @@ from .summary import tender_url
 
 MANIFEST = "_documents.json"
 BIDS_DIR = "Пропозиції учасників"
+CONTRACTS_DIR = "Договори"
 # Windows forbids these characters in file names; the rest keeps names readable in Explorer/Finder.
 FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 INVISIBLE_CATEGORIES = {"Cc", "Cf", "Co", "Cs", "Cn"}
@@ -105,24 +106,57 @@ def latest_documents(docs: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
-def collect_tasks(tender: dict[str, Any], include_signatures: bool, include_bids: bool) -> list[DocTask]:
-    def keep(d: dict[str, Any]) -> bool:
-        if not d.get("url") or d.get("confidentiality") == "buyerOnly":
-            return False
-        is_sig = (d.get("title") or "").lower().endswith(".p7s") or d.get("format") == "application/pkcs7-signature"
-        return include_signatures or not is_sig
+def bid_subdir(bid: dict[str, Any]) -> str:
+    org = (bid.get("tenderers") or [{}])[0]
+    who = safe_name(short_entity(org.get("name")), 60, "Учасник")
+    code = (org.get("identifier") or {}).get("id")
+    return f"{BIDS_DIR}/{who}" + (f" ({code})" if code else "")
 
-    tasks = [DocTask(d, "") for d in latest_documents(tender.get("documents")) if keep(d)]
+
+def bid_documents(bid: dict[str, Any]) -> list[dict[str, Any]]:
+    docs = []
+    for key in ("documents", "financialDocuments", "eligibilityDocuments", "qualificationDocuments"):
+        docs += bid.get(key) or []
+    return latest_documents(docs)
+
+
+def is_public(d: dict[str, Any]) -> bool:
+    return bool(d.get("url")) and d.get("confidentiality") != "buyerOnly"
+
+
+SIGNED_DOCUMENT = re.compile(r"\.(pdf|docx?|xlsx?|odt|ods|rtf|txt|zip|rar|7z|jpe?g|png|tiff?|xml)\.p7[sm]$", re.I)
+
+
+def is_signature(d: dict[str, Any]) -> bool:
+    """A detached signature file. «Пропозиція.pdf.p7s» is a signed document with the PDF inside, not a signature."""
+    title = (d.get("title") or "").lower()
+    if SIGNED_DOCUMENT.search(title):
+        return False
+    return title.endswith((".p7s", ".p7m")) or d.get("format") == "application/pkcs7-signature"
+
+
+def collect_tasks(
+    tender: dict[str, Any],
+    include_signatures: bool,
+    include_bids: bool,
+    *,
+    include_tender: bool = True,
+    bid_ids: set[str] | None = None,
+    include_contracts: bool = False,
+) -> list[DocTask]:
+    """Documents to download. `bid_ids` limits bid documents to these bids (e.g. the winners)."""
+
+    def keep(d: dict[str, Any]) -> bool:
+        return is_public(d) and (include_signatures or not is_signature(d))
+
+    tasks = [DocTask(d, "") for d in latest_documents(tender.get("documents")) if keep(d)] if include_tender else []
     if include_bids:
         for b in tender.get("bids") or []:
-            org = (b.get("tenderers") or [{}])[0]
-            who = safe_name(short_entity(org.get("name")), 60, "Учасник")
-            code = (org.get("identifier") or {}).get("id")
-            sub = f"{BIDS_DIR}/{who}" + (f" ({code})" if code else "")
-            docs = []
-            for key in ("documents", "financialDocuments", "eligibilityDocuments", "qualificationDocuments"):
-                docs += b.get(key) or []
-            tasks += [DocTask(d, sub) for d in latest_documents(docs) if keep(d)]
+            if bid_ids is None or b.get("id") in bid_ids:
+                tasks += [DocTask(d, bid_subdir(b)) for d in bid_documents(b) if keep(d)]
+    if include_contracts:
+        for c in tender.get("contracts") or []:
+            tasks += [DocTask(d, CONTRACTS_DIR) for d in latest_documents(c.get("documents")) if keep(d)]
     return tasks
 
 
@@ -142,7 +176,11 @@ class DocumentDownloader:
         )
 
     async def download_tender(
-        self, tender: dict[str, Any], include_signatures: bool = False, include_bids: bool = False
+        self,
+        tender: dict[str, Any],
+        include_signatures: bool = False,
+        include_bids: bool = False,
+        **selection: Any,  # see collect_tasks: include_tender, bid_ids, include_contracts
     ) -> TenderDownload:
         folder = self.root / tender_folder_name(tender)
         folder.mkdir(parents=True, exist_ok=True)
@@ -179,7 +217,7 @@ class DocumentDownloader:
             taken.setdefault(entry["subdir"], set()).add(entry["file"].lower())
 
         jobs = []
-        for task in collect_tasks(tender, include_signatures, include_bids):
+        for task in collect_tasks(tender, include_signatures, include_bids, **selection):
             d = task.doc
             key = d.get("id") or d["url"]
             version = d.get("dateModified") or d.get("datePublished") or d["url"]

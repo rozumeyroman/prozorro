@@ -9,7 +9,7 @@ from functools import cache
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import Context, MCPServer
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .analytics import summarize
 from .client import NotFound, ProzorroClient, ProzorroError
@@ -37,6 +37,9 @@ INSTRUCTIONS = """\
 4. summarize_tenders: підсумки й топи по вибірці; export_excel: вивантаження в Excel (основний формат
    користувача, з аркушем «Аналітика»).
 5. download_documents: тендерна документація в теки «Замовник - Предмет - UA-ID».
+6. Що саме виграло: get_winning_offer (дані переможця + тексти його пропозиції й договору) → за потреби
+   read_document → save_winning_offer (вендор, модель, кількість, ціна за одиницю). Пошук: list_winning_offers;
+   у Excel це аркуш «Що виграло».
 Посилання на тендер для людини: поле url (prozorro.gov.ua/tender/UA-...).
 """
 
@@ -440,7 +443,8 @@ async def export_excel(
     note = None
     if period_from or period_to:
         note = f"Вибірка: період {period_from or '…'} — {period_to or '…'} ({period_mode})"
-    counts = export_tenders(tenders, path, f, include_summary=include_summary, period_note=note)
+    offers = db().offers(tenders=[t["id"] for t in tenders])
+    counts = export_tenders(tenders, path, f, include_summary=include_summary, period_note=note, offers=offers)
     return {"path": str(path), "filter": f.name, "rows": counts}
 
 
@@ -531,6 +535,127 @@ async def prune_documents(
     f = profile_filter(filter)
     keep = {t.get("tenderID") for t in select_tenders(db(), TenderQuery(profile=f.name))}
     return {"filter": f.name, **prune_folders(settings().output_dir / "Документи", keep, confirm=confirm)}
+
+
+class OfferRow(BaseModel):
+    """One supplied product (or service) of the winning offer."""
+
+    tender_item: str | None = Field(None, description="Позиція тендера, якій відповідає рядок (опис з items)")
+    vendor: str | None = Field(None, description="Виробник / вендор, напр. Fortinet")
+    product: str | None = Field(None, description="Товар чи послуга як у пропозиції, напр. FortiGate-200F UTP 1 рік")
+    part_number: str | None = Field(None, description="Артикул / SKU / P/N, якщо є")
+    quantity: float | None = None
+    unit: str | None = None
+    unit_price: float | None = Field(None, description="Ціна за одиницю переможця")
+    currency: str | None = "UAH"
+    vat_included: bool | None = None
+    total: float | None = Field(None, description="Сума рядка; якщо не задано, рахується як кількість × ціна")
+    source: str | None = Field(
+        None, description="Звідки дані: «пропозиція», «договір», «критерії», назва файлу документа"
+    )
+    confidence: Literal["висока", "середня", "низька"] | None = None
+    note: str | None = None
+    award_id: str | None = Field(None, description="Для тендерів з кількома лотами: award_id переможця лота")
+    lot_id: str | None = None
+
+
+@mcp.tool()
+async def get_winning_offer(
+    ctx: Context,
+    tender: Annotated[str, Field(description="Тендер: id, UA-… або посилання")],
+    max_chars: Annotated[
+        int, Field(ge=0, le=100_000, description="Скільки символів тексту документів повернути одразу")
+    ] = 30_000,
+) -> dict[str, Any]:
+    """Що саме виграло тендер: дані переможця кожного лота і тексти його документів.
+
+    Оновлює тендер з API, завантажує документи пропозиції переможця й договору в теку тендера, витягає з них
+    текст (PDF, DOCX, XLSX, архіви, підписані .p7s; скани позначаються як «потрібне OCR»). Повертає позиції з
+    цінами за одиницю (з договору або пропозиції), відповіді переможця на критерії (виробник, модель — першими),
+    документи (спершу цінова пропозиція, договір, технічна) з уривками тексту, згадки вендорів.
+
+    Далі: визначте для кожної позиції вендора, товар/модель, артикул, кількість і ціну за одиницю. Повний текст
+    документа — read_document. Збережіть результат через save_winning_offer і покажіть користувачу таблицею.
+    Не вигадуйте: якщо даних немає, залиште поле порожнім і вкажіть confidence «низька»."""
+    from .offers import fetch_tender, prepare_offer
+
+    async with client() as c:
+        try:
+            data = await fetch_tender(c, db(), tender)
+        except ProzorroError as e:
+            raise ValueError(str(e)) from e
+        # kept even if the filter rejects it: saved offers refer to the tender
+        db().save_tender(data, tender_filter().evaluate(data))
+        await ctx.info(f"{data.get('tenderID')}: завантажую документи переможця")
+        result = await prepare_offer(c, settings(), db(), data, max_chars)
+    if not result["winners"]:
+        result["hint"] = f"Переможця ще не визначено (статус {data.get('status')})."
+    return result
+
+
+@mcp.tool()
+async def read_document(
+    tender: Annotated[str, Field(description="Тендер: id, UA-… або посилання")],
+    file: Annotated[str, Field(description="Файл з поля documents[].file у get_winning_offer (шлях у теці тендера)")],
+    offset: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1000, le=100_000)] = 30_000,
+) -> dict[str, Any]:
+    """Текст завантаженого документа тендера частинами (offset/limit у символах)."""
+    from .documents import tender_folder_name
+    from .offers import document_text
+
+    data = _stored_tender(tender)
+    folder = settings().output_dir / "Документи" / tender_folder_name(data)
+    text, note = document_text(folder, file)
+    chunk = text[offset : offset + limit]
+    return {
+        "file": file,
+        "chars": len(text),
+        "offset": offset,
+        "next_offset": offset + len(chunk) if offset + len(chunk) < len(text) else None,
+        "note": note,
+        "text": chunk,
+    }
+
+
+@mcp.tool()
+async def save_winning_offer(
+    tender: Annotated[str, Field(description="Тендер: id, UA-… або посилання")],
+    rows: Annotated[list[OfferRow], Field(description="Рядки «що виграло»: усі рядки лота (лотів) переможця")],
+) -> dict[str, Any]:
+    """Зберегти, що саме постачає переможець (замінює раніше збережені рядки тих самих лотів).
+
+    Постачальника, лот і award підставляються автоматично, якщо в тендері один переможець. Тендер має бути в
+    локальній базі (після get_winning_offer або sync_tenders)."""
+    from .offers import normalize_rows
+
+    data = _stored_tender(tender)
+    norm = normalize_rows(data, [r.model_dump() for r in rows])
+    saved = db().save_offers(data["id"], data.get("tenderID"), norm)
+    return {"tenderID": data.get("tenderID"), "saved_rows": saved, "rows": db().offers(tender=data["id"])}
+
+
+@mcp.tool()
+async def list_winning_offers(
+    vendor: Annotated[str | None, Field(description="Вендор (частина назви), напр. Fortinet")] = None,
+    supplier: Annotated[str | None, Field(description="Переможець-постачальник (частина назви)")] = None,
+    query: Annotated[str | None, Field(description="Текст у товарі, артикулі чи позиції, напр. FortiGate-200F")] = None,
+    tender: Annotated[str | None, Field(description="Лише цей тендер (id або UA-…)")] = None,
+    limit: Annotated[int, Field(ge=1, le=1000)] = 200,
+) -> dict[str, Any]:
+    """Збережені «що виграло»: хто що постачає і за якою ціною за одиницю. Для порівняння цін і конкурентів."""
+    rows = db().offers(tender=tender, vendor=vendor, supplier=supplier, query=query, limit=limit)
+    for r in rows:
+        r["url"] = tender_url({"tenderID": r.get("tender_id")})
+    return {"count": len(rows), "rows": rows}
+
+
+def _stored_tender(ref: str) -> dict[str, Any]:
+    hex_id, ua_id = resolve_ref(ref)
+    data = db().get_tender(hex_id or ua_id or ref)
+    if not data:
+        raise ValueError(f"Тендер {ref!r} не знайдено в локальній базі: спершу викличте get_winning_offer")
+    return data
 
 
 async def _fresh_tender(c: ProzorroClient, ref: str) -> dict[str, Any]:

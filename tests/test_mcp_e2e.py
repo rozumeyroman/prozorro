@@ -64,6 +64,32 @@ async def test_mcp_stdio_end_to_end(tmp_path):
             docs = payload(await client.call_tool("download_documents", {"stage": "active"}))
             assert docs["tenders"] == 2 and docs["files_downloaded"] == 8
 
+            # what exactly won: winner data and documents, then the rows Claude read from them
+            done = payload(await client.call_tool("search_tenders", {"stage": "complete"}))["results"][0]
+            offer = payload(await client.call_tool("get_winning_offer", {"tender": done["url"]}))
+            assert offer["winners"][0]["supplier_edrpou"] == "12345678"
+            assert [d["kind"] for d in offer["documents"]] == ["technical"]
+            text = payload(
+                await client.call_tool("read_document", {"tender": done["url"], "file": offer["documents"][0]["file"]})
+            )
+            assert text["note"]  # the fake "PDF" has no readable text
+            saved = payload(
+                await client.call_tool(
+                    "save_winning_offer",
+                    {
+                        "tender": done["url"],
+                        "rows": [
+                            {"vendor": "Cisco", "product": "Catalyst 9300-48P", "quantity": 10, "unit_price": 98000}
+                        ],
+                    },
+                )
+            )
+            assert saved["saved_rows"] == 1 and saved["rows"][0]["supplier"] == 'ТОВ "Мережеві Рішення"'
+            found = payload(await client.call_tool("list_winning_offers", {"vendor": "cisco"}))
+            assert found["count"] == 1 and found["rows"][0]["total"] == 980_000
+            xlsx = payload(await client.call_tool("export_excel", {"stage": "complete"}))
+            assert xlsx["rows"]["Що виграло"] == 1
+
             # switch to the cybersecurity profile: stored tenders are re-evaluated locally
             used = payload(await client.call_tool("use_filter", {"name": "cybersecurity"}))
             assert used["active_filter"]["name"] == "cybersecurity" and used["relevant_stored_tenders"] == 1

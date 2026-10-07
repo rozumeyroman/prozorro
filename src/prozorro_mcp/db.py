@@ -98,6 +98,32 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
+-- What exactly won: rows filled in from the winning bid and its documents (offers.py). Not tied to a profile.
+CREATE TABLE IF NOT EXISTS winning_offers (
+    tender TEXT NOT NULL,
+    tender_id TEXT,
+    row_no INTEGER NOT NULL,
+    award_id TEXT,
+    lot_id TEXT,
+    supplier TEXT,
+    supplier_edrpou TEXT,
+    tender_item TEXT,
+    vendor TEXT,
+    product TEXT,
+    part_number TEXT,
+    quantity REAL,
+    unit TEXT,
+    unit_price REAL,
+    currency TEXT,
+    vat_included INTEGER,
+    total REAL,
+    source TEXT,
+    confidence TEXT,
+    note TEXT,
+    saved_at TEXT NOT NULL,
+    PRIMARY KEY (tender, row_no)
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT,
@@ -428,6 +454,63 @@ class Database:
         d["params"] = json.loads(d["params"] or "{}")
         d["stats"] = json.loads(d["stats"] or "null")
         return d
+
+    # winning offers --------------------------------------------------------------------------------
+
+    def save_offers(self, tender: str, tender_id: str | None, rows: list[dict[str, Any]]) -> int:
+        """Replace the rows of the lots (awards) present in `rows`; other lots of the tender are kept."""
+        from .offers import OFFER_FIELDS
+
+        awards = {r.get("award_id") for r in rows}
+        with self.conn:
+            for award in awards:
+                self.conn.execute("DELETE FROM winning_offers WHERE tender = ? AND award_id IS ?", (tender, award))
+            start = self.conn.execute(
+                "SELECT coalesce(max(row_no), 0) FROM winning_offers WHERE tender = ?", (tender,)
+            ).fetchone()[0]
+            cols = ", ".join(OFFER_FIELDS)
+            marks = ", ".join("?" * len(OFFER_FIELDS))
+            for n, r in enumerate(rows, start=start + 1):
+                self.conn.execute(
+                    f"""INSERT INTO winning_offers (tender, tender_id, row_no, {cols}, saved_at)
+                        VALUES (?, ?, ?, {marks}, ?)""",
+                    (tender, tender_id, n, *(r.get(k) for k in OFFER_FIELDS), now_iso()),
+                )
+        return len(rows)
+
+    def offers(
+        self,
+        tender: str | None = None,
+        tenders: list[str] | None = None,
+        vendor: str | None = None,
+        supplier: str | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = [], []
+        if tender:
+            where.append("(o.tender = ? OR o.tender_id = ?)")
+            params += [tender, tender]
+        if tenders is not None:
+            where.append(f"o.tender IN ({','.join('?' * len(tenders)) or 'NULL'})")
+            params += tenders
+        for col, value in (("o.vendor", vendor), ("o.supplier", supplier)):
+            if value:
+                where.append(f"lower({col}) LIKE ?")
+                params.append(f"%{value.lower()}%")
+        if query:
+            where.append(
+                "lower(coalesce(o.product,'') || ' ' || coalesce(o.part_number,'') || ' ' || "
+                "coalesce(o.tender_item,'') || ' ' || coalesce(o.vendor,'')) LIKE ?"
+            )
+            params.append(f"%{query.lower()}%")
+        sql = f"""SELECT o.*, t.title AS tender_title, t.entity_name AS buyer FROM winning_offers o
+                  LEFT JOIN tenders t ON t.id = o.tender
+                  {"WHERE " + " AND ".join(where) if where else ""}
+                  ORDER BY o.saved_at DESC, o.tender, o.row_no"""
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
     def counts(self, profile: str | None = None) -> dict[str, Any]:
         c = self.conn.execute

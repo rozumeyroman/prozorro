@@ -113,6 +113,7 @@ def export_tenders(
     tender_filter: TenderFilter,
     include_summary: bool = True,
     period_note: str | None = None,
+    offers: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     wb = Workbook()
     s_tenders = _Sheet(
@@ -228,6 +229,8 @@ def export_tenders(
         "Пропозиції": s_bids.finish(),
         "Ціни за одиницю": s_prices.finish(),
     }
+    if offers:
+        counts["Що виграло"] = write_offers(wb.create_sheet("Що виграло"), offers)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return counts
@@ -401,6 +404,59 @@ def _discount(price: dict[str, Any] | None, expected: dict[str, Any] | None) -> 
 
 
 SECTION_FONT = Font(bold=True, size=12, color="1F4E78")
+
+
+def write_offers(ws: Worksheet, offers: list[dict[str, Any]]) -> int:
+    """Rows saved with save_winning_offer: what exactly the winner supplies and at which unit price."""
+    sheet = _Sheet(
+        ws,
+        [
+            ("Тендер", 24, None),
+            ("Назва", 40, None),
+            ("Замовник", 30, None),
+            ("Переможець", 30, None),
+            ("ЄДРПОУ переможця", 14, None),
+            ("Позиція тендера", 40, None),
+            ("Вендор", 16, None),
+            ("Товар / послуга", 40, None),
+            ("Артикул", 18, None),
+            ("Кількість", 10, "#,##0.###"),
+            ("Одиниця", 10, None),
+            ("Ціна за одиницю", 14, MONEY),
+            ("Сума", 16, MONEY),
+            ("Валюта", 8, None),
+            ("ПДВ", 9, None),
+            ("Джерело", 24, None),
+            ("Впевненість", 11, None),
+            ("Примітка", 30, None),
+        ],
+    )
+    for o in offers:
+        vat = o.get("vat_included")
+        sheet.add(
+            [
+                o.get("tender_id"),
+                o.get("tender_title"),
+                o.get("buyer"),
+                o.get("supplier"),
+                o.get("supplier_edrpou"),
+                o.get("tender_item"),
+                o.get("vendor"),
+                o.get("product"),
+                o.get("part_number"),
+                o.get("quantity"),
+                o.get("unit"),
+                o.get("unit_price"),
+                o.get("total"),
+                o.get("currency"),
+                None if vat is None else ("з ПДВ" if vat else "без ПДВ"),
+                o.get("source"),
+                o.get("confidence"),
+                o.get("note"),
+            ],
+            link=f"https://prozorro.gov.ua/tender/{o['tender_id']}" if o.get("tender_id") else None,
+        )
+    return sheet.finish()
 
 
 def write_summary(ws: Worksheet, summary: dict[str, Any], period_note: str | None = None) -> int:

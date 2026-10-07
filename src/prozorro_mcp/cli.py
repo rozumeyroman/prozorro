@@ -116,7 +116,10 @@ def _export(args: argparse.Namespace, s: Settings) -> None:
         if args.output
         else s.output_dir / "Експорт" / f"prozorro_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
     )
-    rows = export_tenders(tenders, path, f, include_summary=not args.no_summary, period_note=_period_note(args))
+    offers = db.offers(tenders=[t["id"] for t in tenders])
+    rows = export_tenders(
+        tenders, path, f, include_summary=not args.no_summary, period_note=_period_note(args), offers=offers
+    )
     _dump({"path": str(path), "filter": f.name, "rows": rows})
 
 
@@ -134,10 +137,7 @@ async def _docs(args: argparse.Namespace, s: Settings) -> None:
         _dump({"filter": f.name, **result})
         return
 
-    refs = list(args.tenders)
-    if args.ids_file:
-        lines = Path(args.ids_file).expanduser().read_text(encoding="utf-8").splitlines()
-        refs += [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+    refs = _refs(args)
     if not refs:
         q = _query(args, f.name)
         q.limit = args.max_tenders
@@ -200,6 +200,86 @@ async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
             "rows": rows,
         }
     )
+
+
+def _refs(args: argparse.Namespace) -> list[str]:
+    refs = list(args.tenders)
+    if args.ids_file:
+        lines = Path(args.ids_file).expanduser().read_text(encoding="utf-8").splitlines()
+        refs += [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+    return refs
+
+
+async def _offers(args: argparse.Namespace, s: Settings) -> None:
+    from .offers import fetch_tender, normalize_rows, prepare_offer
+
+    db = Database(s.db_path)
+    if args.action == "list":
+        rows = db.offers(tender=args.tender, vendor=args.vendor, supplier=args.supplier, query=args.query)
+        if args.output:
+            from openpyxl import Workbook
+
+            from .export import write_offers
+
+            wb = Workbook()
+            n = write_offers(wb.active, rows)
+            wb.active.title = "Що виграло"
+            path = Path(args.output).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            wb.save(path)
+            _dump({"path": str(path), "rows": n})
+        else:
+            _dump(rows)
+        return
+    if args.action == "save":
+        payload = json.loads(Path(args.file).expanduser().read_text(encoding="utf-8"))
+        out = []
+        for entry in payload if isinstance(payload, list) else [payload]:
+            tender = db.get_tender(entry["tender"])
+            if not tender:
+                raise ValueError(f"Тендер {entry['tender']!r} не знайдено в базі: спершу `offers prepare`")
+            rows = normalize_rows(tender, entry.get("rows") or [])
+            out.append(
+                {
+                    "tenderID": tender.get("tenderID"),
+                    "saved_rows": db.save_offers(tender["id"], tender.get("tenderID"), rows),
+                }
+            )
+        _dump(out)
+        return
+
+    # prepare
+    f = _filter(s, db, args.filter)
+    refs = _refs(args)
+    if not refs:
+        q = _query(args, f.name)
+        q.limit = args.max_tenders
+        refs = [t["id"] for t in select_tenders(db, q)]
+    out, errors = [], []
+    async with ProzorroClient(s) as client:
+        for i, ref in enumerate(refs, start=1):
+            try:
+                tender = await fetch_tender(client, db, ref)
+                db.save_tender(tender, f.evaluate(tender))
+                r = await prepare_offer(client, s, db, tender, max_chars=0)
+            except (ValueError, NotFound, ProzorroError) as e:
+                errors.append({"tender": ref, "error": str(e)})
+                _log(f"[{i}/{len(refs)}] {ref}: помилка {e}")
+                continue
+            docs = r["documents"]
+            _log(f"[{i}/{len(refs)}] {r['tenderID']}: переможців {len(r['winners'])}, документів {len(docs)}")
+            out.append(
+                {
+                    "tenderID": r["tenderID"],
+                    "folder": r["folder"],
+                    "winners": [w["supplier"] for w in r["winners"]],
+                    "documents": len(docs),
+                    "without_text": [d["file"] for d in docs if not d.get("chars")],
+                    "vendor_mentions": r["vendor_mentions"],
+                    "saved_rows": len(r["saved_rows"]),
+                }
+            )
+    _dump({"tenders": out, "errors": errors})
 
 
 def _filters(args: argparse.Namespace, s: Settings) -> None:
@@ -295,6 +375,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--offline", action="store_true", help="без звернень до Prozorro (лише аркуш «Пройшли»)")
     p_cal.add_argument("-o", "--output", help="шлях до .xlsx")
 
+    p_off = sub.add_parser("offers", help="що саме виграло: документи переможців, збереження й перегляд")
+    off = p_off.add_subparsers(dest="action", required=True)
+    p_prep = off.add_parser(
+        "prepare", help="завантажити документи переможців і договорів, витягти текст (_winner.json, _text/)"
+    )
+    p_prep.add_argument("tenders", nargs="*", help="id, UA-… або посилання; без них діє вибірка (типово завершені)")
+    p_prep.add_argument("--ids-file", help="файл зі списком тендерів, по одному в рядку")
+    _selection_args(p_prep)
+    p_prep.set_defaults(stage="complete")
+    p_prep.add_argument("--max-tenders", type=int, default=20, help="максимум тендерів з вибірки")
+    p_prep.add_argument("--filter", help="профіль фільтра лише для цієї команди")
+    p_save = off.add_parser("save", help='зберегти рядки з JSON: {"tender": "UA-…", "rows": [...]} або список')
+    p_save.add_argument("file")
+    p_olist = off.add_parser("list", help="збережені рядки «що виграло»")
+    p_olist.add_argument("--vendor")
+    p_olist.add_argument("--supplier")
+    p_olist.add_argument("--query")
+    p_olist.add_argument("--tender")
+    p_olist.add_argument("-o", "--output", help="зберегти в Excel (.xlsx)")
+
     p_filters = sub.add_parser("filters", help="профілі фільтрів; з назвою — зробити активним")
     p_filters.add_argument("use", nargs="?", help="назва профілю, який зробити активним")
 
@@ -320,6 +420,8 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_docs(args, s))
         elif args.cmd == "calibrate":
             asyncio.run(_calibrate(args, s))
+        elif args.cmd == "offers":
+            asyncio.run(_offers(args, s))
         elif args.cmd == "filters":
             _filters(args, s)
         else:
