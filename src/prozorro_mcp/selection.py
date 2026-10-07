@@ -41,6 +41,7 @@ class TenderQuery:
     awarded_from: str | None = None
     awarded_to: str | None = None
     limit: int | None = None
+    profile: str | None = None  # only tenders relevant under this filter profile
 
     def statuses(self) -> list[str] | None:
         if self.status:
@@ -69,6 +70,7 @@ def select_tenders(db: Database, q: TenderQuery, sort: str = "date_desc") -> lis
         statuses=q.statuses(),
         sort=sort,
         limit=None,
+        profile=q.profile,
     )
     tenders = db.tenders_data([r["id"] for r in rows])
     lo, hi = _dt(q.awarded_from), _dt(q.awarded_to)

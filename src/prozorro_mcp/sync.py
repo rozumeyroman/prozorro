@@ -64,7 +64,7 @@ class Syncer:
         refreshed regardless of their creation date.
         """
         started = time.monotonic()
-        params = {"since": since.isoformat(), "only_new": only_new}
+        params = {"since": since.isoformat(), "only_new": only_new, "filter": self.filter.name}
         run_id = self.db.start_run(params)
         stats: Counter[str] = Counter()
         requests_before = self.client.requests_made
@@ -100,7 +100,7 @@ class Syncer:
         if item.get("status") in DRAFT_STATUSES:
             stats["skip_draft"] += 1
             return None
-        known = self.db.get_decision(item["id"])
+        known = self.db.get_decision(item["id"], self.filter.key)
         if known is not None:
             if known["relevant"]:
                 if known["date_modified"] != item.get("dateModified"):
@@ -131,7 +131,7 @@ class Syncer:
         rejected = self.filter.prefilter(item)
         if rejected:
             stats["rejected_prefilter"] += 1
-            self.db.save_decision(item, rejected)
+            self.db.save_decision(item, rejected, self.filter.key)
             return None
         return why
 
@@ -155,9 +155,10 @@ class Syncer:
                 decision.currency,
             )
         feed_view = {**item, "dateModified": tender.get("dateModified"), "status": tender.get("status")}
-        self.db.save_decision(feed_view, decision)
+        self.db.save_decision(feed_view, decision, self.filter.key)
         if decision.relevant:
             self.db.save_tender(tender, decision)
+            self.db.save_match(tender["id"], self.filter.name, self.filter.key, decision)
             return why != "refresh"
         stats[f"rejected_{decision.stage}"] += 1
         return False

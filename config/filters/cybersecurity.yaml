@@ -1,0 +1,105 @@
+# Профіль "cybersecurity": товари та послуги з кібербезпеки.
+# Коди обрано за docs/cpv-codes.md (розділ 1); логіка шарів описана в docs/tender-filter.md.
+description: "Кібербезпека: антивіруси/EDR/XDR, файрволи, проксі, SIEM/SOC, сканери, DLP, захист пошти, DAST/SAST, BAS, PAM/IAM, Deception, аудит і пентест"
+
+min_value:
+  amount: 500000
+  currency: UAH
+  scope: relevant_lots
+
+feed_prefilter:
+  procurement_method_types:
+    include:
+      - aboveThreshold
+      - aboveThresholdUA
+      - aboveThresholdEU
+      - aboveThresholdUA.defense
+      - simple.defense
+      - competitiveOrdering
+      - competitiveDialogueUA
+      - competitiveDialogueEU
+      - competitiveDialogueUA.stage2
+      - competitiveDialogueEU.stage2
+      - closeFrameworkAgreementUA
+      - closeFrameworkAgreementSelectionUA
+      - priceQuotation
+      - requestForProposal
+      - negotiation
+      - negotiation.quick
+      - belowThreshold
+    only_for_entity_kinds:
+      belowThreshold: [special]
+  skip_statuses: [draft, draft.pending, draft.unsuccessful, draft.stage2]
+
+# Основні коди: тема визначається самим кодом (група = тема в Excel і пошуку)
+cpv_strong:
+  security_software:
+    - 48730000-4   # ПЗ для забезпечення безпеки (захист файлів, даних)
+    - 72212730-5   # Розробка ПЗ для забезпечення захисту
+  endpoint:
+    - 48760000-3   # ПЗ для захисту від вірусів
+    - 72212760-4   # Розробка антивірусного ПЗ
+  audit_testing:
+    - 72150000-1   # Консультації з комп'ютерного аудиту
+    - 72800000-8   # Комп'ютерний аудит і тестування
+
+# Загальні коди: позиція підходить лише з ключовим словом
+cpv_weak:
+  - 48000000-8     # усе ПЗ (ліцензії часто купують під загальним кодом)
+  - 72000000-5     # усі ІТ-послуги (постачання ліцензій, підтримка, впровадження)
+  - 32400000-7     # мережі та мережеве обладнання (апаратні файрволи, NGFW)
+  - 30230000-0     # комп'ютерне обладнання (апаратні засоби захисту)
+  - 50300000-8     # ТО обладнання (сервісні контракти на засоби захисту)
+  - 79417000-0     # консультації з безпеки (часто фізична охорона)
+
+keywords:
+  # Назва тендера враховується лише для тендерів з однією позицією,
+  # щоб офісний пакет у тендері «Антивірус та офісне ПЗ» не потрапляв у вибірку.
+  title_context: single_item
+  include:
+    endpoint:
+      - 'антивірус|антивирус|anti-?virus'
+      - '\b(EDR|XDR|EPP|MDR)\b'
+      - 'захист\w* (робочих станцій|кінцевих точок)|endpoint'
+    network_security:
+      - 'firewall|файрвол|фаєрвол|брандмауер|брандмаузер|міжмережев\w* екран'
+      - '\b(NGFW|UTM|IPS|IDS|WAF|SWG|ZTNA|SASE|NAC)\b'
+      - 'проксі|proxy'
+      - '\bVPN\b'
+      - 'пісочниц|sandbox'
+      - 'шлюз\w* безпеки'
+    siem_soc:
+      - '\b(SIEM|SOAR|SOC|NDR|UEBA)\b'
+      - 'моніторинг\w* (подій|інцидентів) (інформаційної )?безпеки'
+      - 'центр\w* (кібер|протидії кібер)'
+    identity:
+      - '\b(PAM|IAM|IdM|IGA|SSO|MFA|2FA)\b'
+      - 'двофакторн|багатофакторн|привілейован\w* (доступ|облікових)'
+      - 'керуванн\w* (доступом|ідентифікац|обліковими записами)'
+    appsec_testing:
+      - '\b(DAST|SAST|SCA|BAS)\b'
+      - 'сканер\w* (вразливостей|безпеки)|vulnerability|вразливост'
+      - 'тестуванн\w* на проникнення|пентест|penetration'
+    data_email:
+      - '\bDLP\b|витоку (інформації|даних|конфіденц)'
+      - 'захист\w* (пошти|електронної пошти)|email security|антиспам|anti-?spam'
+      - 'шифруванн|криптограф'
+    deception:
+      - 'deception|honeypot|ханіпот|приман'
+    general:
+      - 'кібер'
+      - 'інформаційн\w* безпек|захист\w* інформаці'
+      - '\bКСЗІ\b|комплексн\w* систем\w* захисту'
+    vendors:
+      - '\b(Fortinet|FortiGate|FortiAnalyzer|FortiMail|FortiWeb|FortiClient|FortiSIEM|FortiEDR)\b'
+      - '\b(Palo Alto|Cortex XDR|Prisma|Check ?Point|Sophos|ESET|Bitdefender|CrowdStrike|SentinelOne|Trellix)\b'
+      - '\b(Trend Micro|Splunk|QRadar|Wazuh|ArcSight|Tenable|Nessus|Qualys|Rapid7|Acunetix|Invicti|Checkmarx)\b'
+      - '\b(Imperva|CyberArk|Senhasegura|Fudo|Zscaler|Cymulate|Picus|SafeBreach|Varonis|Forcepoint)\b'
+      - '\b(Cisco (Secure|Firepower|ASA|Umbrella|Duo|ISE)|Firepower|Kaspersky|Dr\.?Web|Zecurion|Safetica)\b'
+  exclude:
+    # офісна техніка та комплектуючі
+    - 'картридж|тонер|принтер|\bБФП\b|ноутбук|моноблок|монітор(?!инг)|клавіатур|\bмиш[аі]\b'
+    - 'оперативн\w* пам|жорстк\w* диск|блок\w* живлення|відеокарт'
+    # фізична безпека (79417000-0 та подібні)
+    - 'відеоспостереж|сигналізац|охорон\w* (об.єкт|приміщ|територ)|пожеж'
+    - 'електромереж|електричн\w* мереж'

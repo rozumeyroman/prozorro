@@ -27,6 +27,7 @@ async def test_mcp_stdio_end_to_end(tmp_path):
                 "PROZORRO_API_URL": api_url,
                 "PROZORRO_DB": str(tmp_path / "test.db"),
                 "PROZORRO_OUTPUT_DIR": str(tmp_path / "out"),
+                "PROZORRO_FILTER": "it-infrastructure",
             },
         )
         async with Client(params, read_timeout_seconds=60) as client:
@@ -57,5 +58,28 @@ async def test_mcp_stdio_end_to_end(tmp_path):
             assert docs["tenders"] == 1 and docs["files_downloaded"] == 5 and docs["files_failed"] == 0
             docs = payload(await client.call_tool("download_documents", {"stage": "active"}))
             assert docs["tenders"] == 2 and docs["files_downloaded"] == 8
+
+            # switch to the cybersecurity profile: stored tenders are re-evaluated locally
+            used = payload(await client.call_tool("use_filter", {"name": "cybersecurity"}))
+            assert used["active_filter"]["name"] == "cybersecurity" and used["relevant_stored_tenders"] == 1
+            found = payload(await client.call_tool("search_tenders", {}))
+            assert found["filter"] == "cybersecurity" and [r["title"] for r in found["results"]] == [
+                "Антивірусний захист"
+            ]
+            # one-off override without changing the active profile
+            found = payload(await client.call_tool("search_tenders", {"filter": "it-infrastructure"}))
+            assert found["total"] == 3
+            st = payload(await client.call_tool("status", {}))
+            assert st["active_filter"]["name"] == "cybersecurity"
+
+            # change the rules on the fly: lower the threshold so the 400k firewall licence passes
+            saved = payload(
+                await client.call_tool(
+                    "save_filter", {"name": "cyber-300k", "base": "cybersecurity", "min_value": 300000}
+                )
+            )
+            assert saved["active"] and saved["filter"]["min_value"].startswith("300,000")
+            names = {f["name"]: f for f in payload(await client.call_tool("list_filters", {}))}
+            assert names["cyber-300k"]["active"] and names["cyber-300k"]["source"] == "user"
     finally:
         server.shutdown()

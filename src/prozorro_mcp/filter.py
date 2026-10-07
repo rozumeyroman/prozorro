@@ -1,7 +1,9 @@
-"""Tender relevance filter. Logic is described in docs/tender-filter.md, rules live in config/tender-filter.yaml."""
+"""Tender relevance filter. Logic is described in docs/tender-filter.md, rules live in config/filters/*.yaml."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,8 +50,13 @@ class Decision:
 
 
 class TenderFilter:
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], name: str = "custom"):
         self.config = config
+        self.name = name
+        # Changes whenever the rules change: decisions cached under an old key are re-evaluated.
+        digest = hashlib.sha1(json.dumps(config, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]
+        self.key = f"{name}:{digest}"
+        self.description = config.get("description", "")
         mv = config["min_value"]
         self.min_amount = float(mv["amount"])
         self.currency = mv.get("currency", "UAH")
@@ -65,15 +72,22 @@ class TenderFilter:
         strong = [(cpv_prefix(c), group) for group, codes in config["cpv_strong"].items() for c in codes]
         self.strong = sorted(strong, key=lambda x: -len(x[0]))
         self.weak = sorted((cpv_prefix(c) for c in config.get("cpv_weak", [])), key=len, reverse=True)
+        self.cpv_exclude = [cpv_prefix(c) for c in config.get("cpv_exclude", [])]
 
         kw = config.get("keywords", {})
-        self.include = [re.compile(p, re.I) for p in kw.get("include", [])]
+        include = kw.get("include", [])
+        # Either a flat list (topic "keyword") or {group: [patterns]} (topic = group name).
+        groups = include.items() if isinstance(include, dict) else [("keyword", include)]
+        self.include = [(group, re.compile(p, re.I)) for group, patterns in groups for p in patterns]
         self.exclude = [re.compile(p, re.I) for p in kw.get("exclude", [])]
+        # "always": tender title/description count as context for every item;
+        # "single_item": only when the tender has one item (avoids e.g. an office suite riding on "антивірус").
+        self.title_context = kw.get("title_context", "always")
 
     @classmethod
-    def from_file(cls, path: Path) -> TenderFilter:
+    def from_file(cls, path: Path, name: str | None = None) -> TenderFilter:
         with open(path, encoding="utf-8") as f:
-            return cls(yaml.safe_load(f))
+            return cls(yaml.safe_load(f), name or path.stem)
 
     # Layer 1: data available in the feed (opt_fields) -------------------------------------------------
 
@@ -109,6 +123,8 @@ class TenderFilter:
         if not code:
             return None
         digits = cpv_digits(code)
+        if any(digits.startswith(p) for p in self.cpv_exclude):
+            return None
         desc = item.get("description") or ""
         base = dict(
             item_id=item.get("id", ""),
@@ -123,10 +139,10 @@ class TenderFilter:
             if any(rx.search(desc) for rx in self.exclude):
                 return None
             for text in (desc, context_text):
-                for rx in self.include:
+                for group, rx in self.include:
                     m = rx.search(text)
                     if m:
-                        return ItemMatch(topic="keyword", reason=f"CPV {code} + «{m.group(0)}»", **base)
+                        return ItemMatch(topic=group, reason=f"CPV {code} + «{m.group(0)}»", **base)
         return None
 
     def evaluate(self, tender: dict[str, Any]) -> Decision:
@@ -138,6 +154,8 @@ class TenderFilter:
 
         lots = {lot["id"]: lot for lot in tender.get("lots") or [] if lot.get("id")}
         tender_text = " ".join(filter(None, [tender.get("title"), tender.get("description")]))
+        if self.title_context == "single_item" and len(tender.get("items") or []) > 1:
+            tender_text = ""
         matches: list[ItemMatch] = []
         for item in tender.get("items") or []:
             lot = lots.get(item.get("relatedLot") or "")
@@ -172,9 +190,13 @@ class TenderFilter:
 
     def summary(self) -> dict[str, Any]:
         return {
+            "name": self.name,
+            "description": self.description,
             "min_value": f"{self.min_amount:,.0f} {self.currency} ({self.value_scope})",
             "procurement_method_types": sorted(self.method_types),
             "cpv_strong_groups": {g: len(c) for g, c in self.config["cpv_strong"].items()},
             "cpv_weak": len(self.weak),
+            "cpv_exclude": len(self.cpv_exclude),
+            "keyword_groups": sorted({g for g, _ in self.include}),
             "keywords": len(self.include),
         }

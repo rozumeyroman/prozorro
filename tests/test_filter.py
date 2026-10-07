@@ -30,9 +30,9 @@ def test_weak_cpv_needs_keyword(tender_filter, tenders):
 
 def test_exclude_keyword_beats_context():
     from prozorro_mcp.filter import TenderFilter
-    from prozorro_mcp.settings import DEFAULT_FILTER_CONFIG
+    from prozorro_mcp.settings import DEFAULT_FILTERS_DIR
 
-    f = TenderFilter.from_file(DEFAULT_FILTER_CONFIG)
+    f = TenderFilter.from_file(DEFAULT_FILTERS_DIR / "it-infrastructure.yaml")
     t = make_tender(
         "Серверне обладнання та витратні матеріали", [("30200000-1", "Картридж HP 59A")], 900_000, created=NOW
     )

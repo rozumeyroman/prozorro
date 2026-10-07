@@ -11,8 +11,16 @@ import sys
 from .client import ProzorroClient
 from .db import Database
 from .filter import TenderFilter
+from .profiles import FilterRegistry, ensure_matches
 from .settings import Settings
 from .sync import Syncer, parse_since
+
+
+def _filter(s: Settings, db: Database, name: str | None) -> TenderFilter:
+    reg = FilterRegistry(s.filters_dir, s.user_filters_dir, s.default_filter, s.filter_config)
+    f = reg.resolve(db, name)
+    ensure_matches(db, f)
+    return f
 
 
 def _dump(obj: object) -> None:
@@ -25,11 +33,12 @@ async def _sync(args: argparse.Namespace, s: Settings) -> None:
         syncer = Syncer(
             client,
             db,
-            TenderFilter.from_file(s.filter_config),
+            _filter(s, db, args.filter),
             s.concurrency,
             progress=lambda m: print(m, file=sys.stderr),
         )
         stats = await syncer.sync(parse_since(args.since), only_new=not args.all_modified, max_pages=args.max_pages)
+    ensure_matches(db, syncer.filter)
     _dump(stats)
 
 
@@ -41,14 +50,22 @@ def _export(args: argparse.Namespace, s: Settings) -> None:
     from .selection import TenderQuery, select_tenders
     from .settings import KYIV_TZ
 
-    q = TenderQuery(stage=args.stage, created_from=args.created_from, awarded_from=args.awarded_from, topic=args.topic)
-    tenders = select_tenders(Database(s.db_path), q)
+    db = Database(s.db_path)
+    f = _filter(s, db, args.filter)
+    q = TenderQuery(
+        stage=args.stage,
+        created_from=args.created_from,
+        awarded_from=args.awarded_from,
+        topic=args.topic,
+        profile=f.name,
+    )
+    tenders = select_tenders(db, q)
     path = (
         Path(args.output)
         if args.output
         else s.output_dir / "Експорт" / f"prozorro_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
     )
-    _dump({"path": str(path), "rows": export_tenders(tenders, path, TenderFilter.from_file(s.filter_config))})
+    _dump({"path": str(path), "filter": f.name, "rows": export_tenders(tenders, path, f)})
 
 
 async def _docs(args: argparse.Namespace, s: Settings) -> None:
@@ -60,7 +77,11 @@ async def _docs(args: argparse.Namespace, s: Settings) -> None:
         refs = [args.tender]
     else:
         q = TenderQuery(
-            stage=args.stage, created_from=args.created_from, awarded_from=args.awarded_from, limit=args.max_tenders
+            stage=args.stage,
+            created_from=args.created_from,
+            awarded_from=args.awarded_from,
+            limit=args.max_tenders,
+            profile=_filter(s, db, args.filter).name,
         )
         refs = [t["id"] for t in select_tenders(db, q)]
     out = []
@@ -102,6 +123,10 @@ def main(argv: list[str] | None = None) -> None:
     p_search = sub.add_parser("search", help="пошук у локальній базі")
     p_search.add_argument("query", nargs="?")
     p_search.add_argument("--limit", type=int, default=20)
+    p_filters = sub.add_parser("filters", help="профілі фільтрів; з назвою — зробити активним")
+    p_filters.add_argument("use", nargs="?", help="назва профілю, який зробити активним")
+    for p in (p_sync, p_export, p_docs, p_search):
+        p.add_argument("--filter", help="профіль фільтра лише для цієї команди (за замовчуванням активний)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
@@ -113,8 +138,21 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "docs":
         asyncio.run(_docs(args, s))
     elif args.cmd == "search":
-        rows, total = Database(s.db_path).search(query=args.query, limit=args.limit)
-        _dump({"total": total, "results": rows})
+        db = Database(s.db_path)
+        f = _filter(s, db, args.filter)
+        rows, total = db.search(query=args.query, limit=args.limit, profile=f.name)
+        _dump({"filter": f.name, "total": total, "results": rows})
+    elif args.cmd == "filters":
+        db = Database(s.db_path)
+        reg = FilterRegistry(s.filters_dir, s.user_filters_dir, s.default_filter, s.filter_config)
+        if args.use:
+            ensure_matches(db, reg.set_active(db, args.use))
+        _dump(
+            [
+                {k: v for k, v in f.items() if k in ("name", "active", "source", "description", "min_value")}
+                for f in reg.list(db)
+            ]
+        )
     else:
         from .server import run
 

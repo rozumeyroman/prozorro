@@ -52,15 +52,38 @@ CREATE VIRTUAL TABLE IF NOT EXISTS tenders_fts USING fts5(
     id UNINDEXED, title, entity, items, tokenize = 'unicode61 remove_diacritics 2'
 );
 
-CREATE TABLE IF NOT EXISTS decisions (
-    id TEXT PRIMARY KEY,
+-- Replaced by filter_decisions (decisions are per filter profile now).
+DROP TABLE IF EXISTS decisions;
+
+-- Filter decisions per filter version (filter_key = "<profile>:<rules hash>").
+CREATE TABLE IF NOT EXISTS filter_decisions (
+    id TEXT NOT NULL,
+    filter_key TEXT NOT NULL,
     tender_id TEXT,
     relevant INTEGER NOT NULL,
     stage TEXT,
     reason TEXT,
     status TEXT,
     date_modified TEXT,
-    checked_at TEXT NOT NULL
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (id, filter_key)
+);
+
+-- Which stored tenders are relevant under which filter profile.
+CREATE TABLE IF NOT EXISTS tender_matches (
+    tender TEXT NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+    profile TEXT NOT NULL,
+    filter_key TEXT NOT NULL,
+    topics TEXT,
+    relevant_value REAL,
+    reason TEXT,
+    items TEXT,
+    PRIMARY KEY (tender, profile)
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -92,18 +115,22 @@ class Database:
 
     # decisions -----------------------------------------------------------------------------------
 
-    def get_decision(self, tender_id: str) -> sqlite3.Row | None:
-        return self.conn.execute("SELECT * FROM decisions WHERE id = ?", (tender_id,)).fetchone()
+    def get_decision(self, tender_id: str, filter_key: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM filter_decisions WHERE id = ? AND filter_key = ?", (tender_id, filter_key)
+        ).fetchone()
 
-    def save_decision(self, feed_item: dict[str, Any], decision: Decision) -> None:
+    def save_decision(self, feed_item: dict[str, Any], decision: Decision, filter_key: str) -> None:
         self.conn.execute(
-            """INSERT INTO decisions (id, tender_id, relevant, stage, reason, status, date_modified, checked_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET tender_id=excluded.tender_id, relevant=excluded.relevant,
+            """INSERT INTO filter_decisions
+                 (id, filter_key, tender_id, relevant, stage, reason, status, date_modified, checked_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id, filter_key) DO UPDATE SET tender_id=excluded.tender_id, relevant=excluded.relevant,
                  stage=excluded.stage, reason=excluded.reason, status=excluded.status,
                  date_modified=excluded.date_modified, checked_at=excluded.checked_at""",
             (
                 feed_item["id"],
+                filter_key,
                 feed_item.get("tenderID"),
                 int(decision.relevant),
                 decision.stage,
@@ -113,6 +140,51 @@ class Database:
                 now_iso(),
             ),
         )
+
+    # filter matches ------------------------------------------------------------------------------
+
+    def save_match(self, tender_id: str, profile: str, filter_key: str, decision: Decision) -> None:
+        items = [
+            {"description": m.description, "cpv": m.cpv, "topic": m.topic, "match_reason": m.reason}
+            for m in decision.matches
+        ]
+        self.conn.execute(
+            """INSERT INTO tender_matches (tender, profile, filter_key, topics, relevant_value, reason, items)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(tender, profile) DO UPDATE SET filter_key=excluded.filter_key, topics=excluded.topics,
+                 relevant_value=excluded.relevant_value, reason=excluded.reason, items=excluded.items""",
+            (
+                tender_id,
+                profile,
+                filter_key,
+                ",".join(decision.topics),
+                decision.relevant_value,
+                decision.reason,
+                json.dumps(items, ensure_ascii=False),
+            ),
+        )
+
+    def delete_match(self, tender_id: str, profile: str) -> None:
+        self.conn.execute("DELETE FROM tender_matches WHERE tender = ? AND profile = ?", (tender_id, profile))
+
+    def tenders_stamp(self) -> str:
+        """Changes whenever a tender is added or re-saved."""
+        n, last = self.conn.execute("SELECT count(*), max(fetched_at) FROM tenders").fetchone()
+        return f"{n}:{last}"
+
+    def all_tender_ids(self) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT id FROM tenders")]
+
+    def get_meta(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
 
     # tenders -------------------------------------------------------------------------------------
 
@@ -196,17 +268,27 @@ class Database:
         sort: str = "date_desc",
         limit: int | None = 20,
         offset: int = 0,
+        profile: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Search stored tenders. limit=None returns all matches."""
+        """Search stored tenders. limit=None returns all matches.
+
+        With `profile`, only tenders relevant under that filter profile are returned, and topics/relevant_value
+        come from that profile's evaluation.
+        """
         where, args = [], []
+        join, topics_col, value_col = "", "t.topics", "t.relevant_value"
+        if profile:
+            join = "JOIN tender_matches m ON m.tender = t.id AND m.profile = ?"
+            args.append(profile)
+            topics_col, value_col = "m.topics", "m.relevant_value"
         if query:
             where.append("t.id IN (SELECT id FROM tenders_fts WHERE tenders_fts MATCH ?)")
             args.append(to_fts_query(query))
         if topic:
-            where.append("(',' || t.topics || ',') LIKE ?")
+            where.append(f"(',' || {topics_col} || ',') LIKE ?")
             args.append(f"%,{topic},%")
         if min_value is not None:
-            where.append("t.relevant_value >= ?")
+            where.append(f"{value_col} >= ?")
             args.append(min_value)
         if created_from:
             where.append("t.date_created >= ?")
@@ -221,16 +303,16 @@ class Database:
         order = {
             "date_desc": "t.date_created DESC",
             "date_asc": "t.date_created ASC",
-            "value_desc": "t.relevant_value DESC",
-            "value_asc": "t.relevant_value ASC",
+            "value_desc": f"{value_col} DESC",
+            "value_asc": f"{value_col} ASC",
             "deadline_asc": "t.tender_period_end ASC",
         }.get(sort, "t.date_created DESC")
-        total = self.conn.execute(f"SELECT count(*) FROM tenders t {sql_where}", args).fetchone()[0]
+        total = self.conn.execute(f"SELECT count(*) FROM tenders t {join} {sql_where}", args).fetchone()[0]
         rows = self.conn.execute(
             f"""SELECT t.id, t.tender_id, t.title, t.status, t.procurement_method_type, t.entity_name,
-                       t.entity_edrpou, t.entity_region, t.value_amount, t.relevant_value, t.currency, t.topics,
-                       t.date_created, t.tender_period_end
-                FROM tenders t {sql_where} ORDER BY {order} LIMIT ? OFFSET ?""",
+                       t.entity_edrpou, t.entity_region, t.value_amount, {value_col} AS relevant_value, t.currency,
+                       {topics_col} AS topics, t.date_created, t.tender_period_end
+                FROM tenders t {join} {sql_where} ORDER BY {order} LIMIT ? OFFSET ?""",
             [*args, -1 if limit is None else limit, offset],
         ).fetchall()
         return [dict(r) for r in rows], total
@@ -244,7 +326,12 @@ class Database:
                 out.append(json.loads(row["data"]))
         return out
 
-    def matched_items(self, tender_id: str) -> list[dict[str, Any]]:
+    def matched_items(self, tender_id: str, profile: str | None = None) -> list[dict[str, Any]]:
+        if profile:
+            row = self.conn.execute(
+                "SELECT items FROM tender_matches WHERE tender = ? AND profile = ?", (tender_id, profile)
+            ).fetchone()
+            return json.loads(row[0]) if row and row[0] else []
         rows = self.conn.execute(
             """SELECT description, cpv, quantity, unit, topic, match_reason
                FROM items WHERE tender = ? AND topic IS NOT NULL""",
@@ -277,13 +364,17 @@ class Database:
         d["stats"] = json.loads(d["stats"] or "null")
         return d
 
-    def counts(self) -> dict[str, int]:
+    def counts(self, profile: str | None = None) -> dict[str, Any]:
         c = self.conn.execute
-        return {
-            "relevant_tenders": c("SELECT count(*) FROM tenders").fetchone()[0],
-            "decisions": c("SELECT count(*) FROM decisions").fetchone()[0],
-            "rejected": c("SELECT count(*) FROM decisions WHERE relevant = 0").fetchone()[0],
+        out: dict[str, Any] = {
+            "stored_tenders": c("SELECT count(*) FROM tenders").fetchone()[0],
+            "by_profile": {
+                r[0]: r[1] for r in c("SELECT profile, count(*) FROM tender_matches GROUP BY profile").fetchall()
+            },
         }
+        if profile:
+            out["relevant_tenders"] = out["by_profile"].get(profile, 0)
+        return out
 
     def commit(self) -> None:
         self.conn.commit()
