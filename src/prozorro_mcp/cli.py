@@ -170,13 +170,15 @@ async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
     async with ProzorroClient(s) as client:
         report = await build_report(
             db,
-            client if args.sample else None,
+            None if args.offline else client,
             f,
             created_from=args.created_from,
             created_to=args.created_to,
             sample=args.sample,
             concurrency=s.concurrency,
             progress=_log,
+            cpv_prefixes=[p for p in (args.cpv or "").split(",") if p.strip()],
+            min_value=args.min_value,
         )
     path = (
         Path(args.output).expanduser()
@@ -190,7 +192,11 @@ async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
             "filter": f.name,
             "passed_tenders": report["passed_tenders"],
             "rejected_total": report["rejected_total"],
+            "rejected_with_digest": report["rejected_with_digest"],
+            "rejected_targeted": report["rejected_targeted"],
+            "rejected_without_digest": report["rejected_without_digest"],
             "rejected_checked": report["rejected_checked"],
+            "candidates": len(report["candidates"]),
             "rows": rows,
         }
     )
@@ -278,8 +284,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--created-from", help=f"тендери, оголошені з ({DATE_HELP})")
     p_cal.add_argument("--created-to", help="оголошені до (не включно)")
     p_cal.add_argument(
-        "--sample", type=int, default=300, help="скільки відкинутих тендерів перевірити повторно (0 — без мережі)"
+        "--sample",
+        type=int,
+        default=300,
+        help="скільки відкинутих тендерів БЕЗ збережених даних дозібрати за запуск (повторні запуски продовжують); "
+        "ризикові тендери зі збереженими даними перевіряються завжди",
     )
+    p_cal.add_argument("--cpv", help="також перевірити відкинуті з кодами CPV, префікси через кому: 48,7226,3242")
+    p_cal.add_argument("--min-value", type=float, help="мінімальна вартість відкинутих (типово — поріг фільтра)")
+    p_cal.add_argument("--offline", action="store_true", help="без звернень до Prozorro (лише аркуш «Пройшли»)")
     p_cal.add_argument("-o", "--output", help="шлях до .xlsx")
 
     p_filters = sub.add_parser("filters", help="профілі фільтрів; з назвою — зробити активним")

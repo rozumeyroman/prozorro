@@ -558,13 +558,27 @@ async def calibrate_filter(
     created_to: DateParam = None,
     sample: Annotated[
         int,
-        Field(ge=0, le=2000, description="Скільки відкинутих тендерів перевірити повторно (0 — без звернень до API)"),
+        Field(
+            ge=0,
+            le=5000,
+            description="Скільки відкинутих тендерів без збережених даних (синхронізованих до появи цієї функції) "
+            "перевірити повторно за запуск; 0 — без звернень до API",
+        ),
     ] = 300,
+    cpv_prefixes: Annotated[
+        list[str] | None,
+        Field(description="Також перевірити відкинуті тендери з позиціями цих кодів CPV (префікси: 48, 7226, 3242)"),
+    ] = None,
+    min_value: Annotated[
+        float | None, Field(ge=0, description="Мінімальна очікувана вартість відкинутих (типово — поріг фільтра)")
+    ] = None,
     filter: FilterParam = None,
 ) -> dict[str, Any]:
     """Звіт для калібрування фільтра в Excel: позиції тендерів, що пройшли (з правилом, яке спрацювало), і
     відкинуті тендери зі словами, схожими на тему (можливі пропуски). Користувач позначає вердикти в колонках
     «Вердикт» / «Мав пройти?», а за позначками уточнюються коди, ключові слова й виключення (save_filter).
+    Відкинуті тендери перевіряються прицільно: ті, що відкинуті за вартістю, мають схожі слова або коди з
+    cpv_prefixes. Для старих рішень без збережених даних кожен запуск дозбирає `sample` штук.
     Поверніть користувачу шлях до файлу. Для великих вибірок надійніше `prozorro-mcp calibrate` з терміналу."""
     from .calibrate import build_report, write_report
 
@@ -575,7 +589,16 @@ async def calibrate_filter(
 
     async with client() as c:
         report = await build_report(
-            db(), c if sample else None, f, created_from, created_to, sample, settings().concurrency, report_progress
+            db(),
+            c,
+            f,
+            created_from,
+            created_to,
+            sample,
+            settings().concurrency,
+            report_progress,
+            cpv_prefixes=cpv_prefixes or (),
+            min_value=min_value,
         )
     path = settings().output_dir / "Експорт" / f"calibration_{f.name}_{datetime.now(KYIV_TZ):%Y-%m-%d_%H%M}.xlsx"
     rows = write_report(report, path)
@@ -586,6 +609,9 @@ async def calibrate_filter(
         "rules": dict(report["rules"]),
         "top_keywords": dict(report["keywords"].most_common(15)),
         "rejected_total": report["rejected_total"],
+        "rejected_with_digest": report["rejected_with_digest"],
+        "rejected_targeted": report["rejected_targeted"],
+        "rejected_without_digest": report["rejected_without_digest"],
         "rejected_checked": report["rejected_checked"],
         "candidates": len(report["candidates"]),
         "rows": rows,

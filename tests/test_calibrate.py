@@ -37,3 +37,37 @@ async def test_calibration_offline(fake, cyber_filter):
     await run_sync(fake, cyber_filter, db)
     report = await build_report(db, None, cyber_filter)
     assert report["passed_tenders"] == 1 and report["rejected_checked"] == 0 and report["rejected_total"] > 0
+
+
+async def test_calibration_targets_risky_rejected(fake, cyber_filter):
+    db = Database(":memory:")
+    await run_sync(fake, cyber_filter, db)
+    rejected = db.rejected_decisions(cyber_filter.name)
+    # sync keeps a digest of every fully fetched rejected tender
+    assert all(r["cpvs"] is not None for r in rejected)
+    cisco = next(r for r in rejected if r["title"] == "Закупівля комутаторів для ЦОД")
+    assert "cisco" in cisco["probe"] and cisco["cpvs"] == "32420000-3"
+    settings = Settings(api_url="http://fake/api/2.5", max_retries=0)
+    async with ProzorroClient(settings, transport=fake.transport()) as c:
+        report = await build_report(db, c, cyber_filter, sample=0)
+        # only risky ones are fetched: related words or rejected by value; not cartridges or servers
+        assert report["rejected_targeted"] == report["rejected_checked"] < len(rejected)
+        assert not any(r["tender"]["title"] == "Серверне обладнання" for r in report["candidates"])
+        # CPV prefixes widen the net
+        report = await build_report(db, c, cyber_filter, sample=0, cpv_prefixes=["3023"])
+        assert any(r["tender"]["title"] == "Серверне обладнання" for r in report["candidates"])
+
+
+async def test_calibration_backfills_old_decisions(fake, cyber_filter):
+    db = Database(":memory:")
+    await run_sync(fake, cyber_filter, db)
+    db.conn.execute("UPDATE filter_decisions SET title = NULL, cpvs = NULL, value = NULL, probe = NULL")
+    total = len(db.rejected_decisions(cyber_filter.name))
+    settings = Settings(api_url="http://fake/api/2.5", max_retries=0)
+    async with ProzorroClient(settings, transport=fake.transport()) as c:
+        report = await build_report(db, c, cyber_filter, sample=1)
+        assert report["rejected_targeted"] == 0 and report["rejected_without_digest"] == total - 1
+        report = await build_report(db, c, cyber_filter, sample=100)
+        assert report["rejected_without_digest"] == 0
+        report = await build_report(db, c, cyber_filter, sample=100)
+        assert report["rejected_with_digest"] == total and report["rejected_targeted"] > 0

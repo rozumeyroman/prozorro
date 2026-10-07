@@ -15,6 +15,7 @@ from typing import Any
 from .client import NotFound, ProzorroClient
 from .db import Database
 from .filter import DRAFT_STATUSES, OPEN_STATUSES, Decision, TenderFilter
+from .probe import tender_digest
 from .settings import KYIV_TZ
 
 log = logging.getLogger(__name__)
@@ -265,7 +266,7 @@ class Syncer:
                 decision.currency,
             )
         feed_view = {**item, "dateModified": tender.get("dateModified"), "status": tender.get("status")}
-        self.db.save_decision(feed_view, decision, self.filter.key)
+        self.db.save_decision(feed_view, decision, self.filter.key, tender_digest(tender))
         if decision.relevant:
             self.db.save_tender(tender, decision)
             self.db.save_match(tender["id"], self.filter.name, self.filter.key, decision)

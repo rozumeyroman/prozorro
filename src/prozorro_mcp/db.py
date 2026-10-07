@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS filter_decisions (
     status TEXT,
     date_modified TEXT,
     checked_at TEXT NOT NULL,
+    -- digest of a fully fetched tender (probe.tender_digest); NULL when only the feed entry was seen
+    title TEXT,
+    cpvs TEXT,
+    value REAL,
+    probe TEXT,
     PRIMARY KEY (id, filter_key)
 );
 
@@ -103,6 +108,9 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 """
 
 
+DIGEST_COLUMNS = (("title", "TEXT"), ("cpvs", "TEXT"), ("value", "REAL"), ("probe", "TEXT"))
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -116,6 +124,10 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(filter_decisions)")}
+        for name, kind in DIGEST_COLUMNS:
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE filter_decisions ADD COLUMN {name} {kind}")
         # relevant_value/topics used to hold the values of the profile a tender was synced with, which went stale
         # after switching profiles; the per-profile values live in tender_matches.
         self.conn.execute(
@@ -134,14 +146,20 @@ class Database:
             "SELECT * FROM filter_decisions WHERE id = ? AND filter_key = ?", (tender_id, filter_key)
         ).fetchone()
 
-    def save_decision(self, feed_item: dict[str, Any], decision: Decision, filter_key: str) -> None:
+    def save_decision(
+        self, feed_item: dict[str, Any], decision: Decision, filter_key: str, digest: dict[str, Any] | None = None
+    ) -> None:
+        digest = digest or {}
         self.conn.execute(
             """INSERT INTO filter_decisions
-                 (id, filter_key, tender_id, relevant, stage, reason, status, date_modified, checked_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 (id, filter_key, tender_id, relevant, stage, reason, status, date_modified, checked_at,
+                  title, cpvs, value, probe)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id, filter_key) DO UPDATE SET tender_id=excluded.tender_id, relevant=excluded.relevant,
                  stage=excluded.stage, reason=excluded.reason, status=excluded.status,
-                 date_modified=excluded.date_modified, checked_at=excluded.checked_at""",
+                 date_modified=excluded.date_modified, checked_at=excluded.checked_at,
+                 title=coalesce(excluded.title, title), cpvs=coalesce(excluded.cpvs, cpvs),
+                 value=coalesce(excluded.value, value), probe=coalesce(excluded.probe, probe)""",
             (
                 feed_item["id"],
                 filter_key,
@@ -152,14 +170,27 @@ class Database:
                 feed_item.get("status"),
                 feed_item.get("dateModified"),
                 now_iso(),
+                digest.get("title"),
+                digest.get("cpvs"),
+                digest.get("value"),
+                digest.get("probe"),
             ),
         )
+
+    def save_digest(self, tender_id: str, digest: dict[str, Any]) -> None:
+        """Backfill the digest of a tender into all its decisions (calibration re-fetches old rejected ones)."""
+        self.conn.execute(
+            "UPDATE filter_decisions SET title = ?, cpvs = ?, value = ?, probe = ? WHERE id = ?",
+            (digest.get("title"), digest.get("cpvs"), digest.get("value"), digest.get("probe"), tender_id),
+        )
+        self.conn.commit()
 
     def rejected_decisions(self, profile: str, stages: tuple[str, ...] = ("topic", "value")) -> list[dict[str, Any]]:
         """Latest negative decision per tender for any version of `profile` (filter keys "<profile>:<hash>")."""
         marks = ",".join("?" * len(stages))
         rows = self.conn.execute(
-            f"""SELECT id, tender_id, stage, reason, max(checked_at) AS checked_at FROM filter_decisions
+            f"""SELECT id, tender_id, stage, reason, title, cpvs, value, probe, max(checked_at) AS checked_at
+                FROM filter_decisions
                 WHERE filter_key LIKE ? AND relevant = 0 AND stage IN ({marks}) GROUP BY id""",
             (f"{profile}:%", *stages),
         ).fetchall()
