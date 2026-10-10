@@ -21,6 +21,7 @@ def test_cli_end_to_end(tmp_path, monkeypatch, capsys):
         monkeypatch.setenv("PROZORRO_OUTPUT_DIR", str(tmp_path / "out"))
         monkeypatch.setenv("PROZORRO_FILTER", "it-infrastructure")
         monkeypatch.setenv("PROZORRO_SITE_URL", api_url.rsplit("/api/", 1)[0])
+        monkeypatch.setenv("PROZORRO_SITE_INTERVAL", "0")
 
         stats = run(capsys, "sync", "--since", "today")
         assert stats["relevant_found"] == 3 and stats["complete"] is True

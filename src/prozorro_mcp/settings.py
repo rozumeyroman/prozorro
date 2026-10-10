@@ -45,6 +45,10 @@ class Settings:
     # An empty feed page in the middle of the feed is requested again this many times before giving up.
     feed_empty_retries: int = 3
     feed_retry_delay: float = 2.0
+    # prozorro.gov.ua allows 60 requests a minute: at most one request per this many seconds, and pauses.
+    site_min_interval: float = 1.0
+    site_retry_after: float = 60.0  # wait after a 429 without Retry-After
+    site_low_limit_pause: float = 30.0  # wait when x-ratelimit-remaining <= 2
 
     @property
     def user_filters_dir(self) -> Path:
@@ -72,4 +76,5 @@ class Settings:
             winner_docs_config=Path(env.get("PROZORRO_WINNER_DOCS", DEFAULT_WINNER_DOCS_CONFIG)).expanduser(),
             feed_empty_retries=int(env.get("PROZORRO_FEED_EMPTY_RETRIES", 3)),
             feed_retry_delay=float(env.get("PROZORRO_FEED_RETRY_DELAY", 2)),
+            site_min_interval=float(env.get("PROZORRO_SITE_INTERVAL", 1)),
         )

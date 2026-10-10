@@ -19,7 +19,14 @@ DAY = NOW.strftime("%Y-%m-%d")
 
 
 def settings(**kw):
-    return Settings(api_url="http://fake/api/2.5", site_url="http://fake", max_retries=0, feed_retry_delay=0, **kw)
+    return Settings(
+        api_url="http://fake/api/2.5",
+        site_url="http://fake",
+        max_retries=0,
+        feed_retry_delay=0,
+        site_min_interval=0,
+        **kw,
+    )
 
 
 async def coverage(fake, f, db, **kw):
@@ -59,7 +66,7 @@ async def test_coverage_explains_every_tender(fake, tender_filter, tenders):
     report = await coverage(fake, tender_filter, db, cpvs=cpvs, min_value=500_000, fetch=True)
     assert report["missing"] == 0
     assert db.get_tender(missed["tenderID"])["title"] == "Серверне обладнання"
-    assert any(p == f"/tender/{missed['tenderID']}" for p in fake.requests)
+    assert any(p == f"/api/tenders/{missed['tenderID']}/summary" for p in fake.requests)
 
 
 async def test_resolve_internal_id_checks_candidates(fake, tenders):
@@ -85,6 +92,7 @@ def served(tmp_path, monkeypatch, fake):
     monkeypatch.setenv("PROZORRO_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("PROZORRO_FILTER", "it-infrastructure")
     monkeypatch.setenv("PROZORRO_FEED_RETRY_DELAY", "0")
+    monkeypatch.setenv("PROZORRO_SITE_INTERVAL", "0")
     yield fake
     server.shutdown()
 

@@ -21,6 +21,10 @@ import httpx
 from prozorro_mcp.settings import KYIV_TZ
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "tender_complete.json").read_text(encoding="utf-8"))
+# Real prozorro.gov.ua / public-api responses (10.10.2026), see tests/fixtures/site/README.md
+SITE_FIXTURES = Path(__file__).parent / "fixtures" / "site"
+# The real tender page is a Vue shell: no tender data and no internal id in it.
+TENDER_PAGE_HTML = (SITE_FIXTURES / "site_tender_page_UA-2025-01-03-000122-a.html").read_text(encoding="utf-8")
 API_PREFIX = "/api/2.5"
 # Document URLs point here; FakeProzorro rewrites the placeholder to its own address when serving.
 DOC_HOST = "http://docs.placeholder"
@@ -277,6 +281,8 @@ class FakeProzorro:
         self.feed_calls = 0
         self.empty_feed_calls: set[int] = set()  # these feed requests (1-based) return an empty page
         self.contracts: dict[str, dict[str, Any]] = {}  # GET /contracts/{id} (contracting module)
+        self.summaries: dict[str, dict[str, Any]] = {}  # site summary overrides by tenderID (real payloads)
+        self.site_429: int = 0  # the next N site requests get HTTP 429 (Retry-After: 0)
 
     @staticmethod
     def public_modified(t: dict[str, Any]) -> float:
@@ -350,18 +356,35 @@ class FakeProzorro:
                     "tenderPeriod": tp,
                 }
             )
-        return {"data": found[(page - 1) * 20 : page * 20], "total": len(found)}
+        # real shape (site_search_*.json): {page, per_page, total, data}, results without the internal id
+        return {"page": page, "per_page": 20, "total": len(found), "data": found[(page - 1) * 20 : page * 20]}
 
     def tender_page(self, tender_id: str) -> str | None:
+        if not any(t["tenderID"] == tender_id for t in self.tenders.values()):
+            return None
+        return TENDER_PAGE_HTML  # like the real site: the same empty shell for every tender
+
+    def tender_summary(self, tender_id: str) -> dict[str, Any] | None:
+        """GET /api/tenders/{UA}/summary: flat JSON with the internal id, like the real site."""
+        if tender_id in self.summaries:
+            return self.summaries[tender_id]
         t = next((t for t in self.tenders.values() if t["tenderID"] == tender_id), None)
         if not t:
             return None
-        # like the real page: the internal id appears among other hex strings (scripts, hashes)
-        script = f'<script src="/_nuxt/{"ab" * 16}.js"></script>'
-        return f'<html>{script}<a href="/api/tenders/{t["id"]}">{tender_id}</a></html>'
+        keys = ("id", "tenderID", "dateModified", "title", "status", "value", "procurementMethodType", "tenderPeriod")
+        return {**{k: t.get(k) for k in keys}, "procuringEntity": t.get("procuringEntity")}
+
+    def _site_429(self) -> tuple[int, bytes, dict[str, str]] | None:
+        if self.site_429 > 0:
+            self.site_429 -= 1
+            return 429, b'{"message": "Too Many Attempts."}', {"Content-Type": "application/json", "Retry-After": "0"}
+        return None
 
     def handle_post(self, path: str, body: str) -> tuple[int, bytes, dict[str, str]]:
         self.requests.append("POST " + path)
+        limited = self._site_429()
+        if limited:
+            return limited
         if path == "/api/search/tenders":
             out = self.site_search(parse_qs(body))
             return 200, json.dumps(out, ensure_ascii=False).encode(), {"Content-Type": "application/json"}
@@ -371,6 +394,15 @@ class FakeProzorro:
         """Returns (status, body, headers)."""
         self.requests.append(path)
         params = {k: v[0] for k, v in parse_qs(query).items()}
+        if path.startswith("/api/tenders/UA-") and path.endswith("/summary"):
+            limited = self._site_429()
+            if limited:
+                return limited
+            summary = self.tender_summary(path.split("/")[3])
+            headers = {"Content-Type": "application/json", "x-ratelimit-limit": "60", "x-ratelimit-remaining": "56"}
+            if summary is None:
+                return 404, b'{\n    "message": ""\n}', headers
+            return 200, json.dumps(summary, ensure_ascii=False).encode(), headers
         if path.startswith("/tender/UA-"):
             html = self.tender_page(path.split("/")[2])
             if html is None:

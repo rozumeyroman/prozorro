@@ -8,9 +8,16 @@ POST {site}/api/search/tenders (application/x-www-form-urlencoded):
 - results have tenderID, title, value, status, procuringEntity, tenderPeriod, enquiryPeriod (no internal id);
 - value filters do not work: filter by value here.
 
-The CDB API has no lookup by UA-… id. The internal id is taken from the local database (every tender the sync has
-ever looked at is there), otherwise from the tender page prozorro.gov.ua/tender/UA-…: every 32-hex string on it
-is a candidate, checked against GET /tenders/{id} (tenderID must match), so a wrong guess is never used.
+The CDB API has no lookup by UA-… id (`/tenders?tenderID=` is ignored). The internal id is taken from the local
+database (every tender the sync has ever looked at is there), otherwise from the request the site itself makes when
+a tender page opens:
+    GET {site}/api/tenders/{UA-ID}/summary -> 200 flat JSON {"id": "<32 hex>", "tenderID": …, "dateModified": …}
+                                           -> 404 {"message": ""} for an unknown tender
+The id is then checked against GET /tenders/{id} of the public API (tenderID must match). The tender page HTML
+(a Vue shell without data) and the search results (no id) do not contain it.
+
+The site allows 60 requests a minute (x-ratelimit-limit / x-ratelimit-remaining): requests to it are spaced by
+settings.site_min_interval, a 429 waits for Retry-After, and a nearly spent limit makes a pause.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +40,13 @@ log = logging.getLogger(__name__)
 PAGE_SIZE = 20
 HEX_ID = re.compile(r"(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])")
 UA_ID = re.compile(r"UA-\d{4}-\d{2}-\d{2}-\d{6}-[a-z]", re.I)
+
+
+def _retry_after(resp: httpx.Response, default: float) -> float:
+    try:
+        return max(0.0, float(resp.headers.get("retry-after", "")))
+    except ValueError:
+        return default
 
 
 def normalize_tender_id(ref: str) -> str | None:
@@ -93,6 +108,9 @@ def is_cancelled(r: dict[str, Any]) -> bool:
 class SiteClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
+        self._lock = asyncio.Lock()  # one request to the site at a time, spaced by site_min_interval
+        self._last = 0.0
+        self.requests_made = 0
         self._http = httpx.AsyncClient(
             base_url=settings.site_url,
             timeout=settings.request_timeout,
@@ -109,20 +127,61 @@ class SiteClient:
 
     async def _request(self, method: str, url: str, **kw: Any) -> httpx.Response:
         delay = 1.0
-        for attempt in range(self.settings.max_retries + 1):
-            try:
-                resp = await self._http.request(method, url, **kw)
-            except httpx.TransportError as e:
-                if attempt == self.settings.max_retries:
-                    raise ProzorroError(f"{method} {url}: {e!r}") from e
-            else:
+        attempt = waited_429 = 0
+        while True:
+            async with self._lock:
+                pause = self.settings.site_min_interval - (time.monotonic() - self._last)
+                if pause > 0:
+                    await asyncio.sleep(pause)
+                try:
+                    self.requests_made += 1
+                    resp = await self._http.request(method, url, **kw)
+                    error = None
+                except httpx.TransportError as e:
+                    resp, error = None, e
+                finally:
+                    self._last = time.monotonic()
+                if resp is not None:
+                    await self._respect_limit(resp)
+            if resp is not None and resp.status_code == 429:
+                waited_429 += 1
+                if waited_429 > max(self.settings.max_retries, 3):
+                    raise ProzorroError(f"{method} {url}: HTTP 429 (ліміт сайту) після {waited_429 - 1} очікувань")
+                wait = _retry_after(resp, self.settings.site_retry_after)
+                log.warning("%s %s -> 429, wait %.0fs", method, url, wait)
+                await asyncio.sleep(wait)
+                continue
+            if resp is not None:
                 if resp.status_code < 400 or resp.status_code == 404:
                     return resp
-                if resp.status_code not in (429, 500, 502, 503, 504) or attempt == self.settings.max_retries:
+                if resp.status_code not in (500, 502, 503, 504) or attempt >= self.settings.max_retries:
                     raise ProzorroError(f"{method} {url}: HTTP {resp.status_code}")
+            elif attempt >= self.settings.max_retries:
+                raise ProzorroError(f"{method} {url}: {error!r}") from error
+            attempt += 1
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
-        raise AssertionError("unreachable")
+
+    async def _respect_limit(self, resp: httpx.Response) -> None:
+        """Nearly spent per-minute limit: wait (inside the lock, so other requests wait too)."""
+        try:
+            remaining = int(resp.headers.get("x-ratelimit-remaining", ""))
+        except ValueError:
+            return
+        if remaining <= 2:
+            log.warning("prozorro.gov.ua: %d requests left this minute, pausing", remaining)
+            await asyncio.sleep(self.settings.site_low_limit_pause)
+
+    async def tender_summary(self, tender_id: str) -> dict[str, Any] | None:
+        """GET /api/tenders/{UA-ID}/summary: the site's own short card (with the internal id); None if unknown."""
+        resp = await self._request("GET", f"/api/tenders/{tender_id}/summary")
+        if resp.status_code == 404:
+            return None
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise ProzorroError(f"summary {tender_id}: не JSON: {resp.text[:200]}") from e
+        return data if isinstance(data, dict) else None
 
     async def search_page(self, form: list[tuple[str, str]], page: int) -> Any:
         data: dict[str, list[str]] = {}
@@ -170,43 +229,36 @@ class SiteClient:
                 break
         return list(seen.values())
 
-    async def page_candidates(self, tender_id: str) -> list[str]:
-        """32-hex ids found on the tender page and in the search result for it, most frequent first."""
-        found: dict[str, int] = {}
-        try:
-            resp = await self._request("GET", f"/tender/{tender_id}")
-            if resp.status_code == 200:
-                for m in HEX_ID.finditer(resp.text):
-                    found[m.group(1)] = found.get(m.group(1), 0) + 1
-        except ProzorroError as e:
-            log.warning("tender page %s: %s", tender_id, e)
-        try:
-            for r in _results(await self.search_page([("text", tender_id)], 1)):
-                if r.get("tenderID") == tender_id:
-                    for m in HEX_ID.finditer(str(r)):
-                        found[m.group(1)] = found.get(m.group(1), 0) + 5
-        except ProzorroError as e:
-            log.warning("site search %s: %s", tender_id, e)
-        return sorted(found, key=lambda k: -found[k])
+
+def summary_id(summary: dict[str, Any] | None, tender_id: str) -> str | None:
+    """Internal id from a site summary, only if it is about this tender and looks like an id."""
+    if not summary or summary.get("tenderID") != tender_id:
+        return None
+    hex_id = str(summary.get("id") or "")
+    return hex_id if HEX_ID.fullmatch(hex_id) else None
 
 
 async def resolve_internal_id(
-    tender_id: str, db: Database, client: ProzorroClient, site: SiteClient | None, max_candidates: int = 6
+    tender_id: str, db: Database, client: ProzorroClient, site: SiteClient | None
 ) -> str | None:
-    """Internal id for a UA-… id: local database first, then candidates from the site checked against the API."""
+    """Internal id for a UA-… id: local database first, then the site summary, checked against the public API."""
     known = db.internal_id(tender_id)
     if known:
         return known
     if site is None:
         return None
-    for candidate in (await site.page_candidates(tender_id))[:max_candidates]:
-        try:
-            t = await client.get_tender(candidate)
-        except NotFound:
-            continue
-        if t.get("tenderID") == tender_id:
-            return candidate
-    return None
+    try:
+        candidate = summary_id(await site.tender_summary(tender_id), tender_id)
+    except ProzorroError as e:
+        log.warning("prozorro.gov.ua summary %s: %s", tender_id, e)
+        return None
+    if not candidate:
+        return None
+    try:
+        t = await client.get_tender(candidate)
+    except NotFound:
+        return None
+    return candidate if t.get("tenderID") == tender_id else None
 
 
 async def resolve_refs(
