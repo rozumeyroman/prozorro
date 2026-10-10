@@ -1,0 +1,43 @@
+# Which documents of the winning offer to download in the "minimal" mode (`--winner-docs minimal`, the default).
+# Goal: find out exactly what won (vendor, product, model). Needed only:
+#   - manufacturer / distributor authorisation letter (MAF, partner letter);
+#   - specification: technical proposal, compliance with technical requirements, price / commercial proposal
+#     with the list of items, specification to the contract.
+# Certificates, statutes, extracts, orders, minutes, experience, bank guarantees etc. are not downloaded:
+# they are listed in _winner.json as "skipped" and can be fetched on demand:
+#   prozorro-mcp offers fetch UA-… --file "<назва>"
+#
+# Patterns are regular expressions (Python syntax), matched against the file title, case-insensitively.
+# Edit the word lists freely; the file is read on every run.
+
+# Download any file whose title matches at least one of these, whatever its documentType.
+keep_patterns:
+  authorization: 'автор|authori[sz]|\bMAF\b|дилер|дистриб|партнер|виробник|manufacturer'
+  specification: 'специф|технічн\w* ?(пропоз|вимог|характ)|відповідн\w* .*техн|тех\.? ?(пропоз|вимог)'
+  price: 'цінов|комерційн|розрахунок|кошторис|перелік товар'
+
+# Download files of these documentType values (unless they are .p7s duplicates).
+keep_types:
+  - technicalSpecifications
+  - commercialProposal
+  - billOfQuantity
+
+# Files of these types are skipped unless the title matches keep_patterns.
+skip_types:
+  - eligibilityDocuments
+  - qualificationDocuments
+
+# Files without documentType: skipped if the title matches this (and no keep pattern), otherwise downloaded.
+skip_untyped_pattern: >-
+  статут|витяг|виписк|ЄДРПОУ|наказ|рішення|протокол|довідк|відомост|податк|ПДВ|згода|персональн|антикор|
+  структур\w* власн|бенефіц|гарант|банк|баланс|звіт|досвід|аналогічн|відгук|кадр|працівник|субпідряд|судим|санкц
+
+# Archives (zip/rar/7z) are downloaded only when their title matches keep_patterns; a zip is unpacked and only the
+# files matching the same rules are kept.
+archive_suffixes: [.zip, .rar, .7z]
+
+# Contract documents (GET /contracts/{id}, contracting module): titles to download.
+contract_pattern: 'специф|додаток|перелік|договір|договор|контракт'
+
+# OCR (offers prepare/text --ocr) is applied only to scans with titles like these.
+ocr_pattern: 'авториз|лист|дод|форма|пропоз|специф'

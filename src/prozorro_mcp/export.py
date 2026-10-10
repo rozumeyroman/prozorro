@@ -114,6 +114,7 @@ def export_tenders(
     include_summary: bool = True,
     period_note: str | None = None,
     offers: list[dict[str, Any]] | None = None,
+    exclusions: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     wb = Workbook()
     s_tenders = _Sheet(
@@ -231,6 +232,8 @@ def export_tenders(
     }
     if offers:
         counts["Що виграло"] = write_offers(wb.create_sheet("Що виграло"), offers)
+    if exclusions:
+        counts["Виключені"] = write_exclusions(wb.create_sheet("Виключені"), exclusions)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return counts
@@ -455,6 +458,17 @@ def write_offers(ws: Worksheet, offers: list[dict[str, Any]]) -> int:
                 o.get("note"),
             ],
             link=f"https://prozorro.gov.ua/tender/{o['tender_id']}" if o.get("tender_id") else None,
+        )
+    return sheet.finish()
+
+
+def write_exclusions(ws: Worksheet, exclusions: list[dict[str, Any]]) -> int:
+    """Tenders excluded by hand (`exclude add`): not in the other sheets, listed here with the reason."""
+    sheet = _Sheet(ws, [("Тендер", 24, None), ("Назва", 60, None), ("Причина", 50, None), ("Додано", 20, None)])
+    for e in exclusions:
+        sheet.add(
+            [e["tender_id"], e.get("title"), e.get("reason"), e.get("added_at")],
+            link=f"https://prozorro.gov.ua/tender/{e['tender_id']}",
         )
     return sheet.finish()
 

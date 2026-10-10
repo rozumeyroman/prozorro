@@ -318,10 +318,64 @@ class FakeProzorro:
     def tender_json(self, t: dict[str, Any]) -> dict[str, Any]:
         return json.loads(json.dumps(t, ensure_ascii=False).replace(DOC_HOST, self.base))
 
+    # prozorro.gov.ua (site): search API and tender pages ------------------------------------------------------
+
+    def site_search(self, form: dict[str, list[str]]) -> dict[str, Any]:
+        """POST /api/search/tenders: by CPV (any item), tender period overlap, text = tenderID; 20 per page."""
+        cpvs = set(form.get("cpv[]") or [])
+        start = (form.get("date[tender][start]") or [None])[0]
+        end = (form.get("date[tender][end]") or [None])[0]
+        text = (form.get("text") or [None])[0]
+        page = int((form.get("page") or ["1"])[0])
+        found = []
+        for t in sorted(self.tenders.values(), key=lambda t: t["tenderID"]):
+            if t.get("status", "").startswith("draft"):
+                continue
+            if text and text != t["tenderID"]:
+                continue
+            if cpvs and not cpvs & {i["classification"]["id"] for i in t.get("items") or []}:
+                continue
+            tp = t.get("tenderPeriod") or {}
+            if start and (tp.get("endDate") or "")[:10] < start:
+                continue
+            if end and (tp.get("startDate") or "")[:10] > end:
+                continue
+            found.append(
+                {
+                    "tenderID": t["tenderID"],
+                    "title": t["title"],
+                    "value": t["value"],
+                    "status": t["status"],
+                    "procuringEntity": {"name": t["procuringEntity"].get("name")},
+                    "tenderPeriod": tp,
+                }
+            )
+        return {"data": found[(page - 1) * 20 : page * 20], "total": len(found)}
+
+    def tender_page(self, tender_id: str) -> str | None:
+        t = next((t for t in self.tenders.values() if t["tenderID"] == tender_id), None)
+        if not t:
+            return None
+        # like the real page: the internal id appears among other hex strings (scripts, hashes)
+        script = f'<script src="/_nuxt/{"ab" * 16}.js"></script>'
+        return f'<html>{script}<a href="/api/tenders/{t["id"]}">{tender_id}</a></html>'
+
+    def handle_post(self, path: str, body: str) -> tuple[int, bytes, dict[str, str]]:
+        self.requests.append("POST " + path)
+        if path == "/api/search/tenders":
+            out = self.site_search(parse_qs(body))
+            return 200, json.dumps(out, ensure_ascii=False).encode(), {"Content-Type": "application/json"}
+        return 404, b"{}", {"Content-Type": "application/json"}
+
     def handle(self, path: str, query: str) -> tuple[int, bytes, dict[str, str]]:
         """Returns (status, body, headers)."""
         self.requests.append(path)
         params = {k: v[0] for k, v in parse_qs(query).items()}
+        if path.startswith("/tender/UA-"):
+            html = self.tender_page(path.split("/")[2])
+            if html is None:
+                return 404, b"not found", {"Content-Type": "text/html"}
+            return 200, html.encode(), {"Content-Type": "text/html; charset=utf-8"}
         if path.startswith("/get/"):  # document service: redirect like the real one
             return 302, b"", {"Location": f"{self.base}/files/{path[5:]}"}
         if path.startswith("/files/") and path[7:] in self.fail_files:
@@ -357,7 +411,10 @@ class FakeProzorro:
         self.base = base
 
         def handler(request: httpx.Request) -> httpx.Response:
-            status, body, headers = self.handle(request.url.path, request.url.query.decode())
+            if request.method == "POST":
+                status, body, headers = self.handle_post(request.url.path, request.content.decode())
+            else:
+                status, body, headers = self.handle(request.url.path, request.url.query.decode())
             return httpx.Response(status, content=body, headers=headers)
 
         return httpx.MockTransport(handler)
@@ -370,6 +427,16 @@ class FakeProzorro:
             def do_GET(self) -> None:  # noqa: N802
                 u = urlparse(self.path)
                 status, body, headers = fake.handle(u.path, u.query)
+                self.send_response(status)
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                status, body, headers = fake.handle_post(urlparse(self.path).path, self.rfile.read(length).decode())
                 self.send_response(status)
                 for k, v in headers.items():
                     self.send_header(k, v)

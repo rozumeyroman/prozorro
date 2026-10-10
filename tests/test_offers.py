@@ -72,9 +72,9 @@ async def test_prepare_save_and_export(fake, tender_filter, tmp_path):
         r = await prepare_offer(c, settings, db, tender)
 
     files = {d["file"]: d for d in r["documents"]}
-    # price proposal first; the signed DOCX was unpacked; buyerOnly, losers' and tender documents are skipped
+    # price proposal first; the signed DOCX was unwrapped; buyerOnly, losers' and tender documents are skipped
     assert r["documents"][0]["kind"] == "price"
-    price = next(d for f, d in files.items() if f.endswith("Цінова пропозиція.docx.p7s"))
+    price = next(d for f, d in files.items() if f.endswith("Цінова пропозиція.docx"))
     assert "Cisco C9300-48P-E | 10 | 98000" in price["excerpt"]
     assert any(f.startswith("Договори/") and "97500" in d["excerpt"] for f, d in files.items())
     assert not any("конкурента" in f or "Комерційна таємниця" in f or "Технічні вимоги" in f for f in files)

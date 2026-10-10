@@ -20,9 +20,10 @@ def test_cli_end_to_end(tmp_path, monkeypatch, capsys):
         monkeypatch.setenv("PROZORRO_DB", str(tmp_path / "db.sqlite"))
         monkeypatch.setenv("PROZORRO_OUTPUT_DIR", str(tmp_path / "out"))
         monkeypatch.setenv("PROZORRO_FILTER", "it-infrastructure")
+        monkeypatch.setenv("PROZORRO_SITE_URL", api_url.rsplit("/api/", 1)[0])
 
         stats = run(capsys, "sync", "--since", "today")
-        assert stats["relevant_found"] == 3
+        assert stats["relevant_found"] == 3 and stats["complete"] is True
 
         found = run(capsys, "search", "--stage", "active", "--sort", "value_desc")
         assert found["total"] == 2 and found["results"][0]["title"] == "Серверне обладнання"
@@ -38,11 +39,11 @@ def test_cli_end_to_end(tmp_path, monkeypatch, capsys):
             t["tenderID"] for t in fake.tenders.values() if t["title"] in ("Серверне обладнання", "Антивірусний захист")
         ]
         docs = run(capsys, "docs", *ids)
-        assert len(docs["tenders"]) == 2 and not docs["errors"]
+        assert docs["tenders"] == 2 and not docs["errors"]
         ids_file = tmp_path / "ids.txt"
         ids_file.write_text("# список\n" + "\n".join(ids) + "\nUA-2000-01-01-000000-a\n", encoding="utf-8")
         docs = run(capsys, "docs", "--ids-file", str(ids_file))
-        assert all(not t["downloaded"] for t in docs["tenders"]) and len(docs["errors"]) == 1
+        assert all(not t["files"] for t in docs["details"]) and len(docs["errors"]) == 1
 
         # switching to the cybersecurity profile leaves the servers tender folder stale
         run(capsys, "filters", "cybersecurity")

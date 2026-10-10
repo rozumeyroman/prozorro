@@ -1,4 +1,5 @@
-"""Command line: `prozorro-mcp` (MCP server over stdio) and sync/search/summary/export/docs/calibrate/filters."""
+"""Command line: `prozorro-mcp` (MCP server over stdio) and sync/coverage/search/summary/export/docs/offers/
+calibrate/filters/exclude/export-db."""
 
 from __future__ import annotations
 
@@ -73,11 +74,19 @@ def _period_note(args: argparse.Namespace) -> str | None:
 
 
 async def _sync(args: argparse.Namespace, s: Settings) -> None:
+    from .site import SiteClient, resolve_refs
+
     db = Database(s.db_path)
     f = _filter(s, db, args.filter)
     async with ProzorroClient(s) as client:
         syncer = Syncer(client, db, f, s.concurrency, progress=_log)
-        if args.resume:
+        if args.tender_ids:
+            refs = _read_list(args.tender_ids)
+            async with SiteClient(s) as site:
+                ids, missing = await resolve_refs(refs, db, client, site)
+            stats = await syncer.sync_ids(ids)
+            stats["not_resolved"] = missing
+        elif args.resume:
             stats = await syncer.sync(resume=True, max_pages=args.max_pages)
         else:
             stats = await syncer.sync(
@@ -85,9 +94,61 @@ async def _sync(args: argparse.Namespace, s: Settings) -> None:
                 only_new=not args.all_modified,
                 until=parse_since(args.until) if args.until else None,
                 max_pages=args.max_pages,
+                shards=args.shards,
             )
     ensure_matches(db, f)
     _dump(stats)
+    if stats.get("complete") is False:
+        _log(stats.get("warning") or "Синхронізація неповна")
+        sys.exit(3)
+
+
+async def _coverage(args: argparse.Namespace, s: Settings) -> None:
+    from .coverage import check_coverage
+    from .site import SiteClient
+
+    db = Database(s.db_path)
+    f = _filter(s, db, args.filter)
+    cpvs = [c.strip() for c in (args.cpv or "").split(",") if c.strip()]
+    async with ProzorroClient(s) as client, SiteClient(s) as site:
+        report = await check_coverage(
+            db,
+            site,
+            f,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            cpvs=cpvs or None,
+            min_value=args.min_value,
+            fetch=args.fetch_missing,
+            client=client,
+            concurrency=s.concurrency,
+            progress=_log,
+        )
+    ensure_matches(db, f)
+    _dump(report)
+
+
+def _exclude(args: argparse.Namespace, s: Settings) -> None:
+    from .site import normalize_tender_id
+
+    db = Database(s.db_path)
+    if args.action == "list":
+        _dump(db.exclusions())
+        return
+    out = []
+    for ref in args.tenders:
+        tid = normalize_tender_id(ref)
+        if not tid:
+            raise ValueError(f"{ref!r}: потрібен номер UA-…")
+        if args.action == "add":
+            out.append(db.add_exclusion(tid, args.reason))
+        else:
+            out.append({"tenderID": tid, "removed": db.remove_exclusion(tid)})
+    _dump(out)
+
+
+def _export_db(args: argparse.Namespace, s: Settings) -> None:
+    _dump(Database(s.db_path).export_copy(Path(args.path).expanduser(), relevant_only=args.relevant_only))
 
 
 def _search(args: argparse.Namespace, s: Settings) -> None:
@@ -118,22 +179,34 @@ def _export(args: argparse.Namespace, s: Settings) -> None:
     )
     offers = db.offers(tenders=[t["id"] for t in tenders])
     rows = export_tenders(
-        tenders, path, f, include_summary=not args.no_summary, period_note=_period_note(args), offers=offers
+        tenders,
+        path,
+        f,
+        include_summary=not args.no_summary,
+        period_note=_period_note(args),
+        offers=offers,
+        exclusions=db.exclusions(),
     )
     _dump({"path": str(path), "filter": f.name, "rows": rows})
 
 
 async def _docs(args: argparse.Namespace, s: Settings) -> None:
-    from .documents import DocumentDownloader, prune_folders
+    from .batch import download_batch, prune_winner_docs
+    from .documents import prune_folders
+    from .offers import load_rules
+    from .site import SiteClient
 
     db = Database(s.db_path)
     root = s.output_dir / "Документи"
     f = _filter(s, db, args.filter)
-    if args.prune:
-        keep = {t.get("tenderID") for t in select_tenders(db, TenderQuery(profile=f.name))}
-        result = prune_folders(root, keep, confirm=args.yes)
+    if args.prune or args.prune_winner_docs:
+        if args.prune_winner_docs:
+            result = prune_winner_docs(root, load_rules(s), confirm=args.yes)
+        else:
+            keep = {t.get("tenderID") for t in select_tenders(db, TenderQuery(profile=f.name))}
+            result = prune_folders(root, keep, confirm=args.yes)
         if not args.yes:
-            _log("Нічого не видалено. Щоб видалити ці теки, повторіть команду з --yes.")
+            _log("Нічого не видалено. Щоб видалити, повторіть команду з --yes.")
         _dump({"filter": f.name, **result})
         return
 
@@ -142,24 +215,25 @@ async def _docs(args: argparse.Namespace, s: Settings) -> None:
         q = _query(args, f.name)
         q.limit = args.max_tenders
         refs = [t["id"] for t in select_tenders(db, q)]
-    out, errors = [], []
-    async with ProzorroClient(s) as client:
-        downloader = DocumentDownloader(client, root, s.doc_hosts, s.concurrency)
-        for i, ref in enumerate(refs, start=1):
-            stored = db.get_tender(ref.strip())
-            try:
-                tender = await client.get_tender(stored["id"] if stored else ref.strip())
-                r = await downloader.download_tender(tender, include_signatures=args.signatures, include_bids=args.bids)
-            except (NotFound, ProzorroError) as e:
-                errors.append({"tender": ref, "error": str(e) if stored else f"не знайдено в базі чи Prozorro: {e}"})
-                _log(f"[{i}/{len(refs)}] {ref}: помилка {e}")
-                continue
-            _log(
-                f"[{i}/{len(refs)}] {r.tender_id}: +{len(r.downloaded)} / "
-                f"пропущено {r.skipped} / помилок {len(r.failed)}"
-            )
-            out.append(r.__dict__)
-    _dump({"tenders": out, "errors": errors})
+    async with ProzorroClient(s) as client, SiteClient(s) as site:
+        out = await download_batch(
+            client,
+            s,
+            db,
+            refs,
+            with_winners=args.with_winners,
+            winner_docs=args.winner_docs,
+            tender_concurrency=args.tender_concurrency,
+            extract=not args.no_text,
+            ocr=args.ocr,
+            include_signatures=args.signatures,
+            include_bids=args.bids,
+            remaining=args.remaining,
+            tender_filter=f,
+            site=site,
+            progress=_log,
+        )
+    _dump(out)
 
 
 async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
@@ -202,18 +276,47 @@ async def _calibrate(args: argparse.Namespace, s: Settings) -> None:
     )
 
 
+def _read_list(path: str) -> list[str]:
+    lines = Path(path).expanduser().read_text(encoding="utf-8").splitlines()
+    return [ln.split("#", 1)[0].strip() for ln in lines if ln.split("#", 1)[0].strip()]
+
+
 def _refs(args: argparse.Namespace) -> list[str]:
     refs = list(args.tenders)
     if args.ids_file:
-        lines = Path(args.ids_file).expanduser().read_text(encoding="utf-8").splitlines()
-        refs += [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
-    return refs
+        refs += _read_list(args.ids_file)
+    return list(dict.fromkeys(refs))
 
 
 async def _offers(args: argparse.Namespace, s: Settings) -> None:
-    from .offers import fetch_tender, normalize_rows, prepare_offer
+    from .offers import fetch_tender, load_rules, normalize_rows, prepare_offer
 
     db = Database(s.db_path)
+    if args.action == "text":
+        from .batch import winner_folder
+        from .offers import text_for_folder
+
+        root = s.output_dir / "Документи"
+        rules = load_rules(s)
+        out, errors = [], []
+        refs = _refs(args)
+        for i, ref in enumerate(refs, start=1):
+            try:
+                r = text_for_folder(winner_folder(root, ref, db), ocr=args.ocr, rules=rules)
+            except ValueError as e:
+                errors.append({"tender": ref, "error": str(e)})
+                _log(f"[{i}/{len(refs)}] {ref}: помилка {e}")
+                continue
+            _log(f"[{i}/{len(refs)}] {r['tenderID']}: документів {r['documents']}, OCR {len(r['ocr'])}")
+            out.append(r)
+        _dump({"tenders": out, "errors": errors})
+        return
+    if args.action == "fetch":
+        from .batch import fetch_skipped
+
+        async with ProzorroClient(s) as client:
+            _dump(await fetch_skipped(client, s, db, args.tender, args.file))
+        return
     if args.action == "list":
         rows = db.offers(tender=args.tender, vendor=args.vendor, supplier=args.supplier, query=args.query)
         if args.output:
@@ -261,7 +364,17 @@ async def _offers(args: argparse.Namespace, s: Settings) -> None:
             try:
                 tender = await fetch_tender(client, db, ref)
                 db.save_tender(tender, f.evaluate(tender))
-                r = await prepare_offer(client, s, db, tender, max_chars=0)
+                r = await prepare_offer(
+                    client,
+                    s,
+                    db,
+                    tender,
+                    max_chars=0,
+                    winner_docs=args.winner_docs,
+                    extract=not args.no_text,
+                    ocr=args.ocr,
+                    rules=load_rules(s) if args.winner_docs == "minimal" else None,
+                )
             except (ValueError, NotFound, ProzorroError) as e:
                 errors.append({"tender": ref, "error": str(e)})
                 _log(f"[{i}/{len(refs)}] {ref}: помилка {e}")
@@ -274,7 +387,10 @@ async def _offers(args: argparse.Namespace, s: Settings) -> None:
                     "folder": r["folder"],
                     "winners": [w["supplier"] for w in r["winners"]],
                     "documents": len(docs),
-                    "without_text": [d["file"] for d in docs if not d.get("chars")],
+                    "skipped_documents": len(r["skipped_documents"]),
+                    "without_text": [d["file"] for d in docs if not d.get("chars") and not d.get("ocr_chars")]
+                    if r["text_extracted"]
+                    else None,
                     "vendor_mentions": r["vendor_mentions"],
                     "saved_rows": len(r["saved_rows"]),
                 }
@@ -318,6 +434,17 @@ def _selection_args(p: argparse.ArgumentParser, with_query: bool = True) -> None
     )
 
 
+def _winner_doc_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--winner-docs",
+        choices=["minimal", "all"],
+        default="minimal",
+        help="minimal: лише авторизаційні листи, специфікації, цінові пропозиції (config/winner-docs.yaml); all: усе",
+    )
+    p.add_argument("--no-text", action="store_true", help="не витягати текст зараз (пізніше: offers text)")
+    p.add_argument("--ocr", action="store_true", help="розпізнати скани переможця (tesseract, перші 2 сторінки)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="prozorro-mcp")
     sub = parser.add_subparsers(dest="cmd")
@@ -329,7 +456,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all-modified", action="store_true", help="також старші тендери, змінені за період")
     p.add_argument("--resume", action="store_true", help="продовжити перервану синхронізацію з місця зупинки")
     p.add_argument("--max-pages", type=int, default=None, help="обмеження сторінок стрічки (для тестів)")
+    p.add_argument(
+        "--shards",
+        type=int,
+        default=1,
+        help="читати стрічку паралельно N вікнами за часом зміни (для довгих періодів: 3–6)",
+    )
+    p.add_argument(
+        "--tender-ids",
+        metavar="FILE",
+        help="адресно завантажити й перевірити тендери зі списку (UA-… або id, по одному в рядку), без обходу стрічки",
+    )
     p_sync = p
+
+    p_cov = sub.add_parser("coverage", help="звірити базу з пошуком prozorro.gov.ua: які тендери пропущено і чому")
+    p_cov.add_argument("--from", dest="date_from", required=True, help="YYYY-MM-DD (період подання пропозицій)")
+    p_cov.add_argument("--to", dest="date_to", required=True, help="YYYY-MM-DD включно")
+    p_cov.add_argument("--cpv", help="коди CPV через кому (типово — основні коди фільтра)")
+    p_cov.add_argument("--min-value", type=float, help="мінімальна очікувана вартість (типово — поріг фільтра)")
+    p_cov.add_argument(
+        "--fetch-missing", action="store_true", help="дозавантажити пропущені тендери адресно і перевірити фільтром"
+    )
+
+    p_exc = sub.add_parser("exclude", help="ручні виключення тендерів (зберігаються між синхронізаціями)")
+    exc = p_exc.add_subparsers(dest="action", required=True)
+    p_exc_add = exc.add_parser("add", help="виключити тендер(и)")
+    p_exc_add.add_argument("tenders", nargs="+", help="UA-… або посилання")
+    p_exc_add.add_argument("--reason", help="причина (потрапляє в Excel на аркуш «Виключені»)")
+    p_exc_rm = exc.add_parser("remove", help="повернути тендер(и)")
+    p_exc_rm.add_argument("tenders", nargs="+")
+    exc.add_parser("list", help="список виключень")
+
+    p_edb = sub.add_parser("export-db", help="компактна копія бази для перенесення між середовищами")
+    p_edb.add_argument("path", help="шлях до нового файлу .db")
+    p_edb.add_argument(
+        "--relevant-only", action="store_true", help="без кешу рішень щодо нерелевантних тендерів (значно менше)"
+    )
 
     p_search = sub.add_parser("search", help="пошук у локальній базі")
     p_search.add_argument("query", nargs="?")
@@ -358,7 +520,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_docs.add_argument(
         "--prune", action="store_true", help="показати теки тендерів, що не проходять фільтр (з --yes — видалити)"
     )
-    p_docs.add_argument("--yes", action="store_true", help="підтвердити видалення для --prune")
+    p_docs.add_argument("--yes", action="store_true", help="підтвердити видалення для --prune / --prune-winner-docs")
+    p_docs.add_argument(
+        "--with-winners",
+        action="store_true",
+        help="одним проходом також документи переможців і договорів (+ _winner.json), як offers prepare",
+    )
+    _winner_doc_args(p_docs)
+    p_docs.add_argument("--tender-concurrency", type=int, default=4, help="скільки тендерів обробляти паралельно")
+    p_docs.add_argument(
+        "--remaining", action="store_true", help="пропустити тендери, повністю завантажені раніше (без запитів до API)"
+    )
+    p_docs.add_argument(
+        "--prune-winner-docs",
+        action="store_true",
+        help="показати (з --yes — видалити) файли переможців, що не потрібні за config/winner-docs.yaml",
+    )
 
     p_cal = sub.add_parser("calibrate", help="звіт для калібрування фільтра (Excel для позначок)")
     p_cal.add_argument("--created-from", help=f"тендери, оголошені з ({DATE_HELP})")
@@ -386,6 +563,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_prep.set_defaults(stage="complete")
     p_prep.add_argument("--max-tenders", type=int, default=20, help="максимум тендерів з вибірки")
     p_prep.add_argument("--filter", help="профіль фільтра лише для цієї команди")
+    _winner_doc_args(p_prep)
+    p_text = off.add_parser("text", help="витягти текст (і OCR сканів) з уже завантажених документів переможця")
+    p_text.add_argument("tenders", nargs="*", help="UA-… або id")
+    p_text.add_argument("--ids-file", help="файл зі списком тендерів")
+    p_text.add_argument("--ocr", action="store_true", help="розпізнати скани (tesseract, перші 2 сторінки)")
+    p_fetch = off.add_parser("fetch", help="докачати документ переможця, пропущений режимом minimal")
+    p_fetch.add_argument("tender", help="UA-… або id")
+    p_fetch.add_argument("--file", action="append", required=True, help="назва документа (можна кілька разів)")
     p_save = off.add_parser("save", help='зберегти рядки з JSON: {"tender": "UA-…", "rows": [...]} або список')
     p_save.add_argument("file")
     p_olist = off.add_parser("list", help="збережені рядки «що виграло»")
@@ -398,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_filters = sub.add_parser("filters", help="профілі фільтрів; з назвою — зробити активним")
     p_filters.add_argument("use", nargs="?", help="назва профілю, який зробити активним")
 
-    for p in (p_sync, p_search, p_summary, p_export, p_docs, p_cal):
+    for p in (p_sync, p_search, p_summary, p_export, p_docs, p_cal, p_cov):
         p.add_argument("--filter", help="профіль фільтра лише для цієї команди (за замовчуванням активний)")
     return parser
 
@@ -424,6 +609,12 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_offers(args, s))
         elif args.cmd == "filters":
             _filters(args, s)
+        elif args.cmd == "coverage":
+            asyncio.run(_coverage(args, s))
+        elif args.cmd == "exclude":
+            _exclude(args, s)
+        elif args.cmd == "export-db":
+            _export_db(args, s)
         else:
             from .server import run
 

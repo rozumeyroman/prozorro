@@ -1,11 +1,14 @@
 """Plain text from downloaded tender documents: PDF, DOCX, XLSX, ODT/ODS, text formats, ZIP archives and files
 signed with a qualified e-signature (.p7s/.p7m with the document inside). Scanned PDFs have no text layer: they
-are reported as such (OCR is not done here)."""
+are reported as such; ocr_file() recognises them with tesseract on request (offers prepare/text --ocr)."""
 
 from __future__ import annotations
 
 import io
 import re
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from html import unescape
@@ -211,3 +214,77 @@ def _zip(data: bytes, depth: int) -> Extracted:
         if r.note:
             notes.append(f"{m.filename}: {r.note}")
     return Extracted("\n\n".join(parts), "; ".join(notes) or None)
+
+
+OCR_HINT = "для OCR встановіть tesseract і poppler (macOS: brew install tesseract poppler)"
+
+
+def ocr_missing_tools() -> list[str]:
+    return [t for t in ("tesseract", "pdftoppm") if not shutil.which(t)]
+
+
+def _signed_inner(data: bytes) -> bytes | None:
+    from asn1crypto import cms
+
+    try:
+        info = cms.ContentInfo.load(data)
+        content = info["content"]["encap_content_info"]["content"]
+        inner = content.native if content is not None else None
+        return bytes(inner) if inner else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def ocr_file(path: Path, pages: int = 2, lang: str = "eng", timeout: int = 180) -> Extracted:
+    """Recognise the first `pages` pages of a scanned PDF (or an image) with tesseract. Only for scans: costly."""
+    missing = ocr_missing_tools()
+    if "tesseract" in missing:
+        return Extracted("", f"OCR недоступне: {OCR_HINT}")
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        return Extracted("", f"не вдалося прочитати файл: {e}")
+    kind = _kind(data, path.name)
+    if kind == "cms":
+        inner = _signed_inner(data)
+        if not inner:
+            return Extracted("", "OCR: підписаний файл без документа всередині")
+        data = inner
+        kind = _kind(data, re.sub(r"\.(p7s|p7m)$", "", path.name, flags=re.I))
+    with tempfile.TemporaryDirectory(prefix="prozorro-ocr-") as tmp_dir:
+        tmp = Path(tmp_dir)
+        if kind == "pdf":
+            if "pdftoppm" in missing:
+                return Extracted("", f"OCR PDF недоступне: {OCR_HINT}")
+            src = tmp / "in.pdf"
+            src.write_bytes(data)
+            try:
+                subprocess.run(
+                    ["pdftoppm", "-f", "1", "-l", str(pages), "-r", "200", "-png", str(src), str(tmp / "p")],
+                    check=True,
+                    capture_output=True,
+                    timeout=timeout,
+                )
+            except (subprocess.SubprocessError, OSError) as e:
+                return Extracted("", f"OCR: не вдалося перетворити PDF на зображення ({e})")
+            images = sorted(tmp.glob("p*.png"))
+        elif kind == "image":
+            src = tmp / ("in" + (Path(path.name).suffix or ".png"))
+            src.write_bytes(data)
+            images = [src]
+        else:
+            return Extracted("", f"OCR: формат {kind} не підтримується")
+        texts = []
+        for i, img in enumerate(images, start=1):
+            try:
+                r = subprocess.run(
+                    ["tesseract", str(img), "-", "-l", lang],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except (subprocess.SubprocessError, OSError) as e:
+                return Extracted("", f"OCR: помилка tesseract ({e})")
+            texts.append(f"[сторінка {i}, OCR]\n{r.stdout.strip()}")
+    text = "\n\n".join(texts)
+    return Extracted(text, None if text.strip() else "OCR не знайшло тексту")
