@@ -9,6 +9,7 @@ import asyncio
 import logging
 import random
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,30 @@ class ProzorroError(RuntimeError):
 
 class NotFound(ProzorroError):
     pass
+
+
+def offset_time(offset: str | None) -> datetime | None:
+    """Feed position encoded in a feed offset: `{timestamp}.{skip_len}.{skip_hash}` or a plain timestamp.
+
+    The timestamp is the `public_modified` of the last item returned (the feed is ordered by it).
+    """
+    if not offset:
+        return None
+    parts = offset.split(".")
+    candidates = [".".join(parts[:2]), parts[0]] if len(parts) >= 2 else [parts[0]]
+    for c in candidates:
+        try:
+            ts = float(c)
+        except ValueError:
+            continue
+        if ts > 1e9:  # a real Unix time, not a page number
+            return datetime.fromtimestamp(ts, UTC)
+    return None
+
+
+def time_offset(moment: datetime) -> str:
+    """Feed offset that starts a descending walk just before `moment` (by public_modified)."""
+    return f"{moment.timestamp():.6f}"
 
 
 class ProzorroClient:
@@ -62,7 +87,15 @@ class ProzorroClient:
                 log.warning("GET %s failed (%r), retry in %.1fs", url, e, delay)
             else:
                 if resp.status_code == 200:
-                    return resp.json()
+                    try:
+                        return resp.json()
+                    except ValueError as e:  # a cut-off body: retry like a transport error
+                        if attempt == self.settings.max_retries:
+                            raise ProzorroError(f"GET {url}: некоректна відповідь ({e})") from e
+                        log.warning("GET %s: broken JSON (%s), retry in %.1fs", url, e, delay)
+                        await asyncio.sleep(delay + random.uniform(0, delay / 2))
+                        delay = min(delay * 2, 60)
+                        continue
                 if resp.status_code == 404:
                     raise NotFound(f"GET {url}: 404 Not Found")
                 if resp.status_code not in RETRY_STATUSES or attempt == self.settings.max_retries:
@@ -118,11 +151,20 @@ class ProzorroClient:
         offset: str | None = None,
         limit: int = 1000,
         max_pages: int | None = None,
+        state: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[list[dict[str, Any]], str | None]]:
         """Yield (page items, offset of the next page). Descending order walks from the newest modification back.
 
         The next-page offset can be stored and passed back as `offset` to resume the walk later.
+
+        An empty page is not taken as the end of the feed right away: the API sometimes returns one in the middle
+        of the feed. The same offset is requested again (settings.feed_empty_retries times, with a pause); if the
+        API keeps returning an empty page but points to a different next offset, the walk follows it. Why the walk
+        ended is written to `state["end"]`: "empty" (empty page after retries), "no_next" (no next offset),
+        "max_pages" or "stopped" (the caller stopped reading).
         """
+        state = state if state is not None else {}
+        state["end"] = "stopped"
         params: dict[str, Any] = {"limit": limit}
         if descending:
             params["descending"] = 1
@@ -130,15 +172,33 @@ class ProzorroClient:
             params["opt_fields"] = ",".join(opt_fields)
         if offset:
             params["offset"] = offset
-        pages = 0
+        pages = empty_tries = empty_skips = 0
         while True:
             page = await self._get(f"/{resource}", params=params)
             data = page.get("data") or []
-            if not data:
-                return
             next_offset = (page.get("next_page") or {}).get("offset") or None
+            if not data:
+                current = params.get("offset")
+                if empty_tries < self.settings.feed_empty_retries:
+                    empty_tries += 1
+                    state["empty_retries"] = state.get("empty_retries", 0) + 1
+                    log.warning("feed /%s: empty page at offset %s, retry %d", resource, current, empty_tries)
+                    await asyncio.sleep(self.settings.feed_retry_delay * empty_tries)
+                    continue
+                if next_offset and next_offset != current and empty_skips < 5:
+                    empty_skips += 1
+                    empty_tries = 0
+                    params["offset"] = next_offset
+                    continue
+                state["end"] = "empty"
+                return
+            empty_tries = empty_skips = 0
             yield data, next_offset
             pages += 1
-            if not next_offset or (max_pages and pages >= max_pages):
+            if not next_offset:
+                state["end"] = "no_next"
+                return
+            if max_pages and pages >= max_pages:
+                state["end"] = "max_pages"
                 return
             params["offset"] = next_offset

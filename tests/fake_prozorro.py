@@ -275,16 +275,45 @@ class FakeProzorro:
         self.fail_files: set[str] = set()  # document keys whose download fails with HTTP 500
         self.contents: dict[str, bytes] = {}  # document key -> file body (default: a fake PDF stub)
         self.feed_calls = 0
+        self.empty_feed_calls: set[int] = set()  # these feed requests (1-based) return an empty page
+        self.contracts: dict[str, dict[str, Any]] = {}  # GET /contracts/{id} (contracting module)
+
+    @staticmethod
+    def public_modified(t: dict[str, Any]) -> float:
+        """Feed order key. Like the real CDB it may differ from dateModified (set t["public_modified"])."""
+        pm = t.get("public_modified")
+        return float(pm) if pm is not None else datetime.fromisoformat(t["dateModified"]).timestamp()
 
     def feed(self, params: dict[str, str]) -> dict[str, Any]:
-        ordered = sorted(self.tenders.values(), key=lambda t: t["dateModified"], reverse=bool(params.get("descending")))
-        start = int(params.get("offset") or 0)
+        """Descending feed by public_modified with real-looking offsets `{timestamp}.{skip_len}.{hash}`."""
+        descending = bool(params.get("descending"))
+        ordered = sorted(self.tenders.values(), key=self.public_modified, reverse=descending)
+        offset = params.get("offset")
+        if offset:
+            parts = offset.split(".")
+            ts = float(".".join(parts[:2])) if len(parts) >= 2 else float(parts[0])
+            skip = int(parts[2]) if len(parts) >= 3 else 0
+            older = [
+                t for t in ordered if (self.public_modified(t) < ts if descending else self.public_modified(t) > ts)
+            ]
+            same = [t for t in ordered if self.public_modified(t) == ts]
+            ordered = same[skip:] + older
         limit = min(int(params.get("limit") or 100), self.page_size)
         fields = set((params.get("opt_fields") or "").split(",")) - {""}
-        page = ordered[start : start + limit]
-        data = [{"id": t["id"], "dateModified": t["dateModified"], **{f: t[f] for f in fields if f in t}} for t in page]
-        out: dict[str, Any] = {"data": data, "next_page": {"offset": str(start + len(page))}}
-        return out
+        page = ordered[:limit]
+        data = []
+        for t in page:
+            item = {"id": t["id"], "dateModified": t["dateModified"], **{f: t[f] for f in fields if f in t}}
+            if "public_modified" in fields:
+                item["public_modified"] = self.public_modified(t)
+            data.append(item)
+        if page:
+            last = self.public_modified(page[-1])
+            same_ts = sum(1 for t in page if self.public_modified(t) == last)
+            next_offset = f"{last:.6f}.{same_ts}.fakehash"
+        else:
+            next_offset = offset or f"{datetime.now().timestamp():.6f}.0.fakehash"
+        return {"data": data, "next_page": {"offset": next_offset}}
 
     def tender_json(self, t: dict[str, Any]) -> dict[str, Any]:
         return json.loads(json.dumps(t, ensure_ascii=False).replace(DOC_HOST, self.base))
@@ -308,10 +337,16 @@ class FakeProzorro:
             if self.fail_feed_after is not None and self.feed_calls > self.fail_feed_after:
                 return 500, b"error", {"Content-Type": "text/plain"}
             body = self.feed(params)
+            if self.feed_calls in self.empty_feed_calls:
+                body = {"data": [], "next_page": {"offset": params.get("offset") or body["next_page"]["offset"]}}
         elif path.startswith("/tenders/"):
             t = self.tenders.get(path.split("/")[2])
             if t:
                 body = {"data": self.tender_json(t)}
+        elif path.startswith("/contracts/"):
+            c = self.contracts.get(path.split("/")[2])
+            if c:
+                body = {"data": self.tender_json(c)}
         if body is None:
             err = {"status": "error", "errors": [{"location": "url", "name": "id", "description": "Not Found"}]}
             return 404, json.dumps(err).encode(), {"Content-Type": "application/json"}

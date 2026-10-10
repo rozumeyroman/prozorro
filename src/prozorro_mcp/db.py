@@ -124,6 +124,14 @@ CREATE TABLE IF NOT EXISTS winning_offers (
     PRIMARY KEY (tender, row_no)
 );
 
+-- Tenders the user excluded by hand: kept across syncs and filter versions, hidden from selections and exports.
+CREATE TABLE IF NOT EXISTS exclusions (
+    tender_id TEXT PRIMARY KEY,
+    reason TEXT,
+    title TEXT,
+    added_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT,
@@ -350,8 +358,9 @@ class Database:
         limit: int | None = 20,
         offset: int = 0,
         profile: str | None = None,
+        include_excluded: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Search stored tenders. limit=None returns all matches.
+        """Search stored tenders. limit=None returns all matches. Manually excluded tenders are left out.
 
         With `profile`, only tenders relevant under that filter profile are returned, and topics/relevant_value
         come from that profile's evaluation.
@@ -363,6 +372,8 @@ class Database:
             join = "JOIN tender_matches m ON m.tender = t.id AND m.profile = ?"
             args.append(profile)
             topics_col, value_col = "m.topics", "m.relevant_value"
+        if not include_excluded:
+            where.append("coalesce(t.tender_id, '') NOT IN (SELECT tender_id FROM exclusions)")
         if query:
             where.append("t.id IN (SELECT id FROM tenders_fts WHERE tenders_fts MATCH ?)")
             args.append(to_fts_query(query))
@@ -438,11 +449,14 @@ class Database:
         self.conn.commit()
 
     def last_finished_run(self, filter_name: str) -> dict[str, Any] | None:
+        """The latest run of this filter that read the feed all the way back to its start (incomplete runs, e.g.
+        one that stopped on empty feed pages, do not count: `since=last` must not skip what they missed)."""
         for row in self.conn.execute(
             "SELECT * FROM sync_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 200"
         ).fetchall():
             params = json.loads(row["params"] or "{}")
-            if params.get("filter") == filter_name:
+            stats = json.loads(row["stats"] or "{}") or {}
+            if params.get("filter") == filter_name and stats.get("complete", True) and not params.get("targeted"):
                 return {**dict(row), "params": params}
         return None
 
@@ -454,6 +468,87 @@ class Database:
         d["params"] = json.loads(d["params"] or "{}")
         d["stats"] = json.loads(d["stats"] or "null")
         return d
+
+    # manual exclusions -----------------------------------------------------------------------------
+
+    def add_exclusion(self, tender_id: str, reason: str | None) -> dict[str, Any]:
+        stored = self.get_tender(tender_id)
+        title = stored.get("title") if stored else None
+        if not title:
+            row = self.conn.execute(
+                "SELECT title FROM filter_decisions WHERE tender_id = ? AND title IS NOT NULL LIMIT 1", (tender_id,)
+            ).fetchone()
+            title = row["title"] if row else None
+        self.conn.execute(
+            """INSERT INTO exclusions (tender_id, reason, title, added_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT(tender_id) DO UPDATE SET reason=excluded.reason,
+                 title=coalesce(excluded.title, title), added_at=excluded.added_at""",
+            (tender_id, reason, title, now_iso()),
+        )
+        self.conn.commit()
+        return {"tenderID": tender_id, "reason": reason, "title": title}
+
+    def remove_exclusion(self, tender_id: str) -> bool:
+        cur = self.conn.execute("DELETE FROM exclusions WHERE tender_id = ?", (tender_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def exclusions(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM exclusions ORDER BY added_at, tender_id").fetchall()
+        return [dict(r) for r in rows]
+
+    def excluded_ids(self) -> set[str]:
+        return {r[0] for r in self.conn.execute("SELECT tender_id FROM exclusions")}
+
+    def decision_by_tender_id(self, tender_id: str, profile: str | None = None) -> dict[str, Any] | None:
+        """Latest filter decision for a UA-… id (of this profile's filter versions, if given)."""
+        sql, args = "SELECT * FROM filter_decisions WHERE tender_id = ?", [tender_id]
+        if profile:
+            sql += " AND filter_key LIKE ?"
+            args.append(f"{profile}:%")
+        row = self.conn.execute(sql + " ORDER BY checked_at DESC LIMIT 1", args).fetchone()
+        return dict(row) if row else None
+
+    def internal_id(self, tender_id: str) -> str | None:
+        """Internal (hex) id of a UA-… tender seen before: stored, or at least decided on during a sync."""
+        row = self.conn.execute("SELECT id FROM tenders WHERE tender_id = ?", (tender_id,)).fetchone()
+        if not row:
+            row = self.conn.execute(
+                "SELECT id FROM filter_decisions WHERE tender_id = ? LIMIT 1", (tender_id,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def is_relevant(self, tender_id: str, profile: str) -> bool:
+        return (
+            self.conn.execute(
+                "SELECT 1 FROM tenders t JOIN tender_matches m ON m.tender = t.id "
+                "WHERE t.tender_id = ? AND m.profile = ?",
+                (tender_id, profile),
+            ).fetchone()
+            is not None
+        )
+
+    def export_copy(self, path: Path, relevant_only: bool = False) -> dict[str, Any]:
+        """A compact copy of the database to move between environments (VACUUM INTO).
+
+        relevant_only drops the cached decisions on irrelevant tenders: the copy keeps everything needed for
+        search, exports and `sync --since last`, but a sync over an older period will re-check those tenders.
+        """
+        path = Path(path)
+        if path.exists():
+            raise ValueError(f"Файл {path} уже існує")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.commit()
+        self.conn.execute("VACUUM INTO ?", (str(path),))
+        dropped = 0
+        if relevant_only:
+            copy = sqlite3.connect(str(path))
+            dropped = copy.execute("DELETE FROM filter_decisions WHERE relevant = 0").rowcount
+            copy.execute("DELETE FROM meta WHERE key = 'sync_checkpoint'")
+            copy.commit()
+            copy.execute("VACUUM")
+            copy.close()
+        return {"path": str(path), "megabytes": round(path.stat().st_size / 1_048_576, 1), "dropped_decisions": dropped}
 
     # winning offers --------------------------------------------------------------------------------
 

@@ -19,6 +19,10 @@ DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "prozorro.db"
 DEFAULT_OUTPUT_DIR = Path.home() / "Prozorro"
 # Tender documents are downloaded only from these hosts (and their subdomains).
 DEFAULT_DOC_HOSTS = ("prozorro.gov.ua",)
+# Public site (unofficial search API used to check completeness and to find tenders by UA-… id).
+DEFAULT_SITE_URL = "https://prozorro.gov.ua"
+# Which documents of the winning offer to download in the "minimal" mode.
+DEFAULT_WINNER_DOCS_CONFIG = PROJECT_ROOT / "config" / "winner-docs.yaml"
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,11 @@ class Settings:
     extra_headers: dict[str, str] = field(default_factory=dict)
     output_dir: Path = DEFAULT_OUTPUT_DIR
     doc_hosts: tuple[str, ...] = DEFAULT_DOC_HOSTS
+    site_url: str = DEFAULT_SITE_URL
+    winner_docs_config: Path = DEFAULT_WINNER_DOCS_CONFIG
+    # An empty feed page in the middle of the feed is requested again this many times before giving up.
+    feed_empty_retries: int = 3
+    feed_retry_delay: float = 2.0
 
     @property
     def user_filters_dir(self) -> Path:
@@ -59,4 +68,7 @@ class Settings:
             doc_hosts=tuple(
                 h.strip() for h in env.get("PROZORRO_DOC_HOSTS", ",".join(DEFAULT_DOC_HOSTS)).split(",") if h.strip()
             ),
+            site_url=env.get("PROZORRO_SITE_URL", DEFAULT_SITE_URL).rstrip("/"),
+            winner_docs_config=Path(env.get("PROZORRO_WINNER_DOCS", DEFAULT_WINNER_DOCS_CONFIG)).expanduser(),
+            feed_empty_retries=int(env.get("PROZORRO_FEED_EMPTY_RETRIES", 3)),
         )
