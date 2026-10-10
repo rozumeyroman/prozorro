@@ -191,6 +191,8 @@ async def download_batch(
         "root": str(root),
         "tenders": len(results),
         "files_downloaded": sum(r["files"] for r in results),
+        "files_skipped": sum(r["already"] for r in results),
+        "files_failed": sum(len(r["errors"]) for r in results),
         "megabytes": round(sum(r["megabytes"] for r in results), 1),
         "already_complete": already,
         "details": results,

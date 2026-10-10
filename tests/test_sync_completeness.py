@@ -152,3 +152,18 @@ async def test_targeted_sync(fake, tender_filter, tenders):
     assert len(by_title) == 2 and sum(r["relevant"] for r in out["tenders"]) == 1
     assert titles(db) == {"Антивірусний захист"}
     assert db.last_finished_run(tender_filter.name) is None  # a targeted run is not a feed sync
+
+
+async def test_shards_refuse_when_api_ignores_time_offsets(tender_filter):
+    import pytest
+    from fake_prozorro import FakeProzorro
+
+    from prozorro_mcp.sync import SyncError
+
+    fake = FakeProzorro(spread_tenders(), page_size=1)
+    feed = fake.feed
+    fake.feed = lambda params: feed({k: v for k, v in params.items() if not (k == "offset" and "." not in v)})
+    db = Database(":memory:")
+    with pytest.raises(SyncError, match="без --shards"):
+        async with ProzorroClient(settings(), transport=fake.transport()) as client:
+            await Syncer(client, db, tender_filter).sync(NOW - timedelta(days=7), shards=3)

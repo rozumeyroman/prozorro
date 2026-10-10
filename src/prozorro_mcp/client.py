@@ -50,8 +50,9 @@ def offset_time(offset: str | None) -> datetime | None:
 
 
 def time_offset(moment: datetime) -> str:
-    """Feed offset that starts a descending walk just before `moment` (by public_modified)."""
-    return f"{moment.timestamp():.6f}"
+    """Feed offset that starts a descending walk at `moment` (by public_modified): a plain Unix timestamp, which
+    the API reads like the timestamp part of its own `{timestamp}.{skip_len}.{skip_hash}` offsets."""
+    return str(int(moment.timestamp()))
 
 
 class ProzorroClient:

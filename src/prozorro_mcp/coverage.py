@@ -71,6 +71,10 @@ async def check_coverage(
     rows = []
     for r in selected:
         reason, detail = classify(db, f, r["tenderID"], excluded)
+        tp = r.get("tenderPeriod") if isinstance(r.get("tenderPeriod"), dict) else {}
+        started = str((tp or {}).get("startDate") or "")[:10]
+        if reason == "missing" and started and started < date_from:
+            detail = f"подання пропозицій почалося {started}: можливо, тендер створено до періоду синхронізації"
         pe = r.get("procuringEntity")
         rows.append(
             {

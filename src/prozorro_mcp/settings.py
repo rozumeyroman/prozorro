@@ -71,4 +71,5 @@ class Settings:
             site_url=env.get("PROZORRO_SITE_URL", DEFAULT_SITE_URL).rstrip("/"),
             winner_docs_config=Path(env.get("PROZORRO_WINNER_DOCS", DEFAULT_WINNER_DOCS_CONFIG)).expanduser(),
             feed_empty_retries=int(env.get("PROZORRO_FEED_EMPTY_RETRIES", 3)),
+            feed_retry_delay=float(env.get("PROZORRO_FEED_RETRY_DELAY", 2)),
         )

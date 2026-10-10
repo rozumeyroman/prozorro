@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .client import NotFound, ProzorroClient, offset_time, time_offset
+from .client import NotFound, ProzorroClient, ProzorroError, offset_time, time_offset
 from .db import Database
 from .filter import DRAFT_STATUSES, OPEN_STATUSES, Decision, TenderFilter
 from .probe import tender_digest
@@ -285,8 +285,13 @@ class Syncer:
         pages = self.client.iter_feed(
             "tenders", opt_fields=fields, offset=shard.offset, max_pages=max_pages, state=state
         )
+        synthetic = bool(shard.end) and shard.pages == 0 and shard.offset == time_offset(shard.end_dt)
         try:
-            await self._read_pages(ctx, shard, pages, prefix)
+            await self._read_pages(ctx, shard, pages, prefix, check_start=synthetic)
+        except ProzorroError as e:
+            if synthetic and shard.pages == 0 and "HTTP 4" in str(e):
+                raise SyncError(f"API не прийняло позицію стрічки за часом ({e}); запустіть без --shards") from e
+            raise
         finally:
             if state.get("empty_retries"):
                 stats["feed_empty_retries"] += state["empty_retries"]
@@ -296,11 +301,20 @@ class Syncer:
                 shard.done = True
             self.save_checkpoint(ctx)
 
-    async def _read_pages(self, ctx: _WalkContext, shard: Shard, pages: Any, prefix: str) -> None:
+    async def _read_pages(
+        self, ctx: _WalkContext, shard: Shard, pages: Any, prefix: str, check_start: bool = False
+    ) -> None:
         stats = ctx.stats
         start, end = shard.start_dt, shard.end_dt
         stopped = False
         async for page, next_offset in pages:
+            if check_start and end and shard.pages == 0:
+                first = feed_position(page[0]) or offset_time(next_offset)
+                if first and first > end + timedelta(hours=1):
+                    raise SyncError(
+                        "API проігнорувало позицію стрічки за часом (шард почався з найновіших змін); "
+                        "запустіть синхронізацію без --shards"
+                    )
             stats["feed_pages"] += 1
             shard.pages += 1
             to_fetch: list[tuple[dict[str, Any], str]] = []

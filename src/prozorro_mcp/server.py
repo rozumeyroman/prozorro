@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .analytics import summarize
 from .client import NotFound, ProzorroClient, ProzorroError
 from .db import Database
-from .documents import DocumentDownloader, prune_folders, safe_name
+from .documents import prune_folders, safe_name
 from .export import export_tenders
 from .filter import TenderFilter
 from .profiles import FilterError, FilterRegistry, ensure_matches
@@ -28,7 +28,9 @@ INSTRUCTIONS = """\
 обладнання. Локальна база містить лише тендери, що пройшли фільтр (тема + очікувана вартість від порогу з конфігу).
 
 Типовий порядок роботи:
-1. sync_tenders: підтягнути нові тендери з Prozorro (за замовчуванням створені сьогодні).
+1. sync_tenders: підтягнути нові тендери з Prozorro (за замовчуванням створені сьогодні). Якщо результат має
+   complete=false, синхронізація НЕПОВНА (див. warning і reached_modified): продовжіть resume=true і скажіть
+   про це користувачу. check_coverage звіряє базу з пошуком prozorro.gov.ua і пояснює кожен пропущений тендер.
 2. search_tenders: шукати у локальній базі (текст, тема, вартість, дати, статус).
 3. get_tender: повна картка тендера: позиції, учасники та їхні ціни, переможці, договори, документи.
 Фільтри: активний профіль (list_filters, use_filter) діє в усіх інструментах, доки користувач не попросить змінити.
@@ -36,7 +38,8 @@ INSTRUCTIONS = """\
 (поріг, коди, ключові слова), використовуйте save_filter.
 4. summarize_tenders: підсумки й топи по вибірці; export_excel: вивантаження в Excel (основний формат
    користувача, з аркушем «Аналітика»).
-5. download_documents: тендерна документація в теки «Замовник - Предмет - UA-ID».
+5. download_documents: тендерна документація в теки «Замовник - Предмет - UA-ID» (with_winners=true — одразу й
+   документи переможців і договорів). Ручні виключення тендерів: exclude_tenders.
 6. Що саме виграло: get_winning_offer (дані переможця + тексти його пропозиції й договору) → за потреби
    read_document → save_winning_offer (вендор, модель, кількість, ціна за одиницю). Пошук: list_winning_offers;
    у Excel це аркуш «Що виграло».
@@ -212,6 +215,9 @@ async def sync_tenders(
         str | None, Field(description="Лише тендери, створені до цієї дати (не включно), напр. кінець кварталу")
     ] = None,
     resume: Annotated[bool, Field(description="Продовжити перервану синхронізацію з місця зупинки")] = False,
+    shards: Annotated[
+        int, Field(ge=1, le=8, description="Читати стрічку паралельно стількома вікнами (для довгих періодів)")
+    ] = 1,
     filter: FilterParam = None,
 ) -> dict[str, Any]:
     """Завантажити з Prozorro тендери за період і зберегти релевантні у локальну базу.
@@ -219,7 +225,8 @@ async def sync_tenders(
     Проходить стрічку змін від найновіших до `since`, відкидає нецікаві тендери за типом процедури та сумою лотів,
     решту завантажує повністю і перевіряє тему (CPV, ключові слова) та очікувану вартість. Результат зберігається
     після кожної сторінки стрічки, тож перервану синхронізацію можна продовжити (resume=true).
-    Великі періоди (тижні й більше) краще запускати з терміналу: `prozorro-mcp sync`.
+    complete=false означає, що стрічку не дочитано до since (reached_modified — докуди дійшли): це не успіх.
+    Великі періоди (тижні й більше) краще запускати з терміналу: `prozorro-mcp sync --shards 4`.
     """
     f = tender_filter(filter)
 
@@ -232,7 +239,11 @@ async def sync_tenders(
         async with client() as c:
             syncer = Syncer(c, db(), f, settings().concurrency, progress=report)
             stats = await syncer.sync(
-                since_dt, only_new=only_new, until=parse_since(until) if until else None, resume=resume
+                since_dt,
+                only_new=only_new,
+                until=parse_since(until) if until else None,
+                resume=resume,
+                shards=shards,
             )
     except SyncError as e:
         raise ValueError(str(e)) from e
@@ -444,7 +455,9 @@ async def export_excel(
     if period_from or period_to:
         note = f"Вибірка: період {period_from or '…'} — {period_to or '…'} ({period_mode})"
     offers = db().offers(tenders=[t["id"] for t in tenders])
-    counts = export_tenders(tenders, path, f, include_summary=include_summary, period_note=note, offers=offers)
+    counts = export_tenders(
+        tenders, path, f, include_summary=include_summary, period_note=note, offers=offers, exclusions=db().exclusions()
+    )
     return {"path": str(path), "filter": f.name, "rows": counts}
 
 
@@ -469,7 +482,16 @@ async def download_documents(
         bool, Field(description="Також документи пропозицій учасників (технічні та цінові пропозиції), якщо публічні")
     ] = False,
     include_signatures: Annotated[bool, Field(description="Також файли підписів .p7s")] = False,
-    max_tenders: Annotated[int, Field(ge=1, le=200)] = 20,
+    with_winners: Annotated[
+        bool,
+        Field(description="Також документи переможців і договорів та _winner.json (як get_winning_offer, без тексту)"),
+    ] = False,
+    winner_docs: Annotated[
+        Literal["minimal", "all"],
+        Field(description="minimal: лише авторизаційні листи, специфікації, цінові пропозиції; all: усі файли"),
+    ] = "minimal",
+    remaining: Annotated[bool, Field(description="Пропустити тендери, вже повністю завантажені раніше")] = False,
+    max_tenders: Annotated[int, Field(ge=1, le=500)] = 20,
     filter: FilterParam = None,
 ) -> dict[str, Any]:
     """Завантажити тендерну документацію в теки на диску користувача.
@@ -497,29 +519,31 @@ async def download_documents(
             limit=max_tenders,
         )
         refs = [t["id"] for t in select_tenders(db(), q)]
-    root = settings().output_dir / "Документи"
-    results, errors = [], []
-    async with client() as c:
-        downloader = DocumentDownloader(c, root, settings().doc_hosts, settings().concurrency)
-        for i, ref in enumerate(refs, start=1):
-            try:
-                data = await _fresh_tender(c, ref)
-            except (ValueError, ProzorroError) as e:
-                errors.append({"tender": ref, "error": str(e)})
-                continue
-            await ctx.info(f"{i}/{len(refs)}: {data.get('tenderID')}")
-            r = await downloader.download_tender(data, include_signatures, include_bid_documents)
-            results.append(r.__dict__)
-    return {
-        "root": str(root),
-        "tenders": len(results),
-        "files_downloaded": sum(len(r["downloaded"]) for r in results),
-        "files_skipped": sum(r["skipped"] for r in results),
-        "files_failed": sum(len(r["failed"]) for r in results),
-        "megabytes": round(sum(r["bytes"] for r in results) / 1_048_576, 1),
-        "details": results,
-        "errors": errors,
-    }
+    from .batch import download_batch
+    from .site import SiteClient
+
+    def report(msg: str) -> None:
+        asyncio.ensure_future(ctx.info(msg))
+
+    async with client() as c, SiteClient(settings()) as site:
+        out = await download_batch(
+            c,
+            settings(),
+            db(),
+            refs,
+            with_winners=with_winners,
+            winner_docs=winner_docs,
+            extract=False,
+            include_signatures=include_signatures,
+            include_bids=include_bid_documents,
+            remaining=remaining,
+            tender_filter=tender_filter(filter),
+            site=site,
+            progress=report,
+        )
+    if with_winners:
+        out["hint"] = "Текст документів переможців: get_winning_offer (витягає й повертає уривки)."
+    return out
 
 
 @mcp.tool()
@@ -566,6 +590,16 @@ async def get_winning_offer(
     max_chars: Annotated[
         int, Field(ge=0, le=100_000, description="Скільки символів тексту документів повернути одразу")
     ] = 30_000,
+    winner_docs: Annotated[
+        Literal["minimal", "all"],
+        Field(
+            description="minimal (типово): лише авторизаційні листи, специфікації, цінові пропозиції й "
+            "специфікації до договору; решта в skipped_documents. all: усі файли пропозиції"
+        ),
+    ] = "minimal",
+    ocr: Annotated[
+        bool, Field(description="Розпізнати скани листів/специфікацій (tesseract, перші 2 сторінки, повільно)")
+    ] = False,
 ) -> dict[str, Any]:
     """Що саме виграло тендер: дані переможця кожного лота і тексти його документів.
 
@@ -587,7 +621,7 @@ async def get_winning_offer(
         # kept even if the filter rejects it: saved offers refer to the tender
         db().save_tender(data, tender_filter().evaluate(data))
         await ctx.info(f"{data.get('tenderID')}: завантажую документи переможця")
-        result = await prepare_offer(c, settings(), db(), data, max_chars)
+        result = await prepare_offer(c, settings(), db(), data, max_chars, winner_docs=winner_docs, ocr=ocr)
     if not result["winners"]:
         result["hint"] = f"Переможця ще не визначено (статус {data.get('status')})."
     return result
@@ -658,22 +692,70 @@ def _stored_tender(ref: str) -> dict[str, Any]:
     return data
 
 
-async def _fresh_tender(c: ProzorroClient, ref: str) -> dict[str, Any]:
-    """Latest tender data from the API (stored copies of finished tenders may predate the award)."""
-    hex_id, ua_id = resolve_ref(ref)
-    if not hex_id:
-        stored = db().get_tender(ua_id) if ua_id else None
-        if not stored:
-            raise ValueError(f"Тендер {ref!r} не знайдено в локальній базі; передайте внутрішній id (32 hex)")
-        hex_id = stored["id"]
-    try:
-        data = await c.get_tender(hex_id)
-    except NotFound as e:
-        raise ValueError(f"Тендер {hex_id} не знайдено в Prozorro") from e
-    stored = db().get_tender(hex_id)
-    if stored:
-        db().save_tender(data, tender_filter().evaluate(data))
-    return data
+@mcp.tool()
+async def exclude_tenders(
+    action: Annotated[Literal["add", "remove", "list"], Field(description="add / remove / list")] = "list",
+    tenders: Annotated[list[str] | None, Field(description="UA-… або посилання")] = None,
+    reason: Annotated[str | None, Field(description="Причина виключення (потрапляє на аркуш «Виключені»)")] = None,
+) -> dict[str, Any]:
+    """Ручні виключення: тендери, які користувач прибрав із вибірки. Список зберігається між синхронізаціями й
+    версіями фільтра; виключені не показуються в пошуку, аналітиці й Excel (там вони на аркуші «Виключені»)."""
+    from .site import normalize_tender_id
+
+    if action == "list":
+        return {"exclusions": db().exclusions()}
+    out = []
+    for ref in tenders or []:
+        tid = normalize_tender_id(ref)
+        if not tid:
+            raise ValueError(f"{ref!r}: потрібен номер UA-…")
+        out.append(
+            db().add_exclusion(tid, reason)
+            if action == "add"
+            else {"tenderID": tid, "removed": db().remove_exclusion(tid)}
+        )
+    return {"result": out, "exclusions": len(db().exclusions())}
+
+
+@mcp.tool()
+async def check_coverage(
+    ctx: Context,
+    date_from: Annotated[str, Field(description="YYYY-MM-DD: початок періоду подання пропозицій")],
+    date_to: Annotated[str, Field(description="YYYY-MM-DD включно")],
+    cpv: Annotated[list[str] | None, Field(description="Коди CPV (типово — основні коди фільтра)")] = None,
+    min_value: Annotated[float | None, Field(ge=0, description="Мінімальна вартість (типово — поріг фільтра)")] = None,
+    fetch_missing: Annotated[
+        bool, Field(description="Дозавантажити тендери, яких немає в базі, адресно і перевірити фільтром")
+    ] = False,
+    filter: FilterParam = None,
+) -> dict[str, Any]:
+    """Звірити базу з пошуком prozorro.gov.ua за кодами CPV і періодом: які тендери є на сайті, але не в базі, і
+    чому (немає в базі / відкинуто фільтром з причиною / виключено вручну). missing_pct — частка пропусків.
+    Великі періоди краще запускати з терміналу: `prozorro-mcp coverage`."""
+    from .coverage import check_coverage as run_check
+    from .site import SiteClient
+
+    f = tender_filter(filter)
+
+    def report(msg: str) -> None:
+        asyncio.ensure_future(ctx.info(msg))
+
+    async with client() as c, SiteClient(settings()) as site:
+        out = await run_check(
+            db(),
+            site,
+            f,
+            date_from=date_from,
+            date_to=date_to,
+            cpvs=cpv,
+            min_value=min_value,
+            fetch=fetch_missing,
+            client=c,
+            concurrency=settings().concurrency,
+            progress=report,
+        )
+    ensure_matches(db(), f)
+    return out
 
 
 @mcp.tool()

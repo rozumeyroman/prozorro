@@ -33,9 +33,10 @@ async def test_mcp_stdio_end_to_end(tmp_path):
         async with Client(params, read_timeout_seconds=60) as client:
             names = {t.name for t in (await client.list_tools()).tools}
             assert {"status", "sync_tenders", "search_tenders", "get_tender", "list_documents"} <= names
+            assert {"exclude_tenders", "check_coverage"} <= names
 
             stats = payload(await client.call_tool("sync_tenders", {"since": "today"}))
-            assert stats["relevant_found"] == 3
+            assert stats["relevant_found"] == 3 and stats["complete"] is True and stats["reached_modified"]
 
             found = payload(await client.call_tool("search_tenders", {"sort": "value_desc"}))
             assert found["total"] == 3
